@@ -1,0 +1,34 @@
+#!/bin/bash
+# log sender. ~six
+
+server="¤ tourmaline"
+echo -e "${server}:\n _sending logs..."
+
+if [[ -z "$sf_mac" ]] 
+then
+  echo "_ 'sf_mac' undefined. expecting {path}"
+  exit
+else
+  cd $sf_mac
+  sf_safe=$(./safe.sh "safe")
+  sf_edit=$(./safe.sh "edit")
+  sf_one=$(./safe.sh "one") 
+fi
+
+echo "_ verifying file..."
+if [[ "$sf_edit" == *".log" ]]
+then
+  echo "_ verification success."
+else
+  echo "_ failed verification. exit."
+  exit
+fi
+
+echo "_ processing."
+for ((;;));
+do
+  scp $sf_edit $sf_safe
+  sleep 1
+done
+
+

@@ -15,7 +15,9 @@ namespace luna {
             public static float qpi = (float) (Math.PI / 2.0);
             public static float tpi = (float) (Math.PI * 3.0 / 2.0f); 
             public static float crs = (float) (( Math.PI * 2.0) / 360.0); 
-
+            public static float pi  = (float) Math.PI;
+            public static float len = (float) 360.0;   
+ 
             public delegate double   _cos ( double c );
             public delegate double _acos ( double c );
             public delegate double   _sin ( double c );
@@ -26,10 +28,24 @@ namespace luna {
             public static _sin      sin = new  _sin     ( Math.Sin );
             public static _atan  atan  = new _atan  ( Math.Atan); 
 
+            public static float flip ( float deg )  {
+               return (trig.wpi - (deg * trig.d2r)) * trig.r2d;
+            }
+            public static float quaternion_offset ( float euler_angle  ) 
+            {
+              float r = euler_angle * d2r; 
+              
+              if ( r < hpi   ) 
+                 return (hpi - r) * r2d; 
+              else if ( r >= hpi ) 
+                 return ( (450.0f * d2r) - r ) * r2d; 
+              else return 0.0f; 
+            }
         }
 
         public static class nota { 
-            public static float ten3 = (float) Math.Pow(10, 3);
+            public static float ten3   = (float) Math.Pow(10, 3); 
+            public static float nten3 = (float) Math.Pow(10,-3);
              
         }
 
@@ -64,6 +80,13 @@ namespace luna {
                 return new _vector( v.x * n, v.y * n, v.z * n);
             }
 
+            public static _vector[ ] scale ( _vector [] v, float n ) {
+                _vector [ ] _v = new _vector[v.Length];
+                for(int i = 0; i < _v.Length; i++ ) 
+                    _v[i] = scale ( _v[i], n);
+                return _v;
+            }
+
             // <optimized out> - vector divide - 2023-01-09 16:35:09
              public static _vector div ( _vector v, float n ) {
                 return new _vector( v.x / n, v.y / n, v.z / n);
@@ -72,14 +95,27 @@ namespace luna {
             public static Vector3 to_vector3 ( _vector v ) {
                 return new Vector3(v.x, v.y, v.z);
             }
+
+            public static Vector3 to_vector3_yz ( _vector v ) {
+               return new Vector3(v.x, v.z, v.y);
+            }
              // <optimized out> - to vector2 - 2022-12-15 14:08:26
             public static Vector2 to_vector2 (_vector v ) {
                 return new Vector2(v.x, v.y);
+            }
+
+            public static Vector2 to_vector2_yz ( _vector v ) {
+              return new Vector2(v.x, v.z);
             }
             // <optimized out> - to vector - 2022-12-15 13:48:42
             public static _vector to_vector ( Vector3 v ) {
                 return new _vector(v.x, v.y, v.z );
             }
+
+            public static _vector to_vector_yz ( Vector3 v ) {
+                return new _vector(v.x, v.z, v.y); 
+            }
+            
             // <optimized out> - to vector from vector2 - 2022-12-15 14:07:31
             public static _vector to_vector ( Vector2 v ) {
                 return new _vector(v.x, v.y, 0.0f);
@@ -92,19 +128,54 @@ namespace luna {
                 return     (float)Math.Sqrt(x+y+z);
             }
 
-            // <optimized out> - vector[] to Vector3[] - 2023-01-08 08:36:04
-            public static Vector3 [] to_vector3_array ( _vector[] _arr ) {
+            //convert vector3[ ] to _vector[ ]
+            public static _vector[ ] to_vector_array ( Vector3[ ] _arr, bool _yz ) {
+                  _vector[ ] r = new _vector[_arr.Length];
+                  for(int i = 0; i < _arr.Length; i++ ) 
+                  {   
+                      if (_yz) 
+                        r[ i ] = to_vector_yz ( _arr[ i ] );
+                      else 
+                        r[ i ] = to_vector      ( _arr[ i ] ); 
+                  }
+                  return r; 
+            }
+
+            // convert _vector[ ] to vector3[ ]
+            public static Vector3[ ] to_vector3_array ( _vector[ ] _arr, bool _yz ) {
                 if (_arr.Length < 1) { return null; }
                 Vector3[] ret = new Vector3[_arr.Length];
                 for(int i = 0; i < _arr.Length; i++ ) {
-                    ret[i] = to_vector3 ( _arr[i] ); 
+                    if (_yz)
+                        ret[i] = to_vector3_yz ( _arr[i] );
+                    else 
+                        ret[i] = to_vector3      ( _arr[i] ); 
                 }
                 return ret; 
             }
 
+
+            public static Vector2[] to_vector2_array ( _vector[] _arr ) {
+                Vector2[] r = new Vector2[_arr.Length];
+                for(int i = 0; i < _arr.Length; i++ ) { r[i] = to_vector2( _arr[i ] ); } 
+                return r; 
+            } 
+
             // <optimized out>.rb - pop( ) - 2022-12-23 20:06:48 
             public static void pop( ref _vector v, float x, float y, float z ) {
                 v.x = x; v.y = y; v.z = z; 
+            }
+
+            public static _vector[ ] get_radius_vector ( _vector center, float radius  ) {
+              _vector [ ] v = new _vector[(int)trig.len];
+              double cur = 0.0;
+
+              for(int i = 0; i < (int) trig.len; i++ ) {
+                  v[i].x = radius * (float) cos( cur+= (double) trig.crs) + center.x;
+                  v[i].y = radius * (float) sin ( cur+= (double) trig.crs) + center.y;
+                  v[i].z = 0.0f; 
+              }
+              return v; 
             }
   
             // <optimized out> - rotate - 2023-01-23 14:53:59
@@ -135,23 +206,50 @@ namespace luna {
                 return o; 
             }
 
+            // flip y and z axis of vector3[ ]
+            public static Vector3[ ] flip_yz_v3 ( Vector3[ ] _v3 ) {
+                Vector3[ ] r3 = new Vector3[_v3.Length];
+                for(int i = 0; i < r3.Length; i++ ) {
+                    r3[ i ].x = _v3[ i ].x;
+                    r3[ i ].y = _v3[ i ].z; 
+                    r3[ i ].z = _v3[ i ].y; 
+                }
+                return r3; 
+            }
+
         }
 
         // polar to plane converter 
         public static class plane { 
             
-            public static _vector polar_to_cart_coord ( float _long, float _lat, _plane_option opt ) 
+            public static _vector polar_to_cart_coord ( float _long, float _lat, _plane_option _opt ) 
             {
-                return new _vector( opt.convert()*_long, opt.convert()*_lat, 0.0f); 
+                return new _vector 
+                ( 
+                    _opt.convert()*  zeroed( trig.pi, _long),
+                    _opt.convert()*  zeroed( trig.pi, _lat),
+                    0.0f
+                ); 
             }
+
+          public static float zeroed ( float _max_rad,  float _degree ) 
+           {
+                float rad = _degree * trig.d2r; 
+                float pos = _max_rad;
+                float neg = _max_rad * -1.0f; 
+
+                if (rad > pos) return neg - (pos - rad);
+                if (rad < neg) return pos - (neg - rad);
+                return rad; 
+           }
         }
 
         // polar to plane option
-        public struct _plane__option {
+        public struct _plane_option {
            public float amplitude;
            public float wave_number; 
 
-           public _plane_poption ( float _amp, float _wn ) {
+           public _plane_option ( float _amp, float _wn ) {
              this.amplitude = _amp; this.wave_number = _wn;  
            }
             
@@ -161,10 +259,16 @@ namespace luna {
         }
 
         // <optimized out> - clamp - 2023-01-04 20:52:22
-        public static class numop {
+        public static class num {
+            
+            public delegate double _pow ( double x, double y ); 
+            public static Action<double, double> pow = delegate(double x, double y) { Math.Pow(x, y); };
+
             public static float clamp ( float val, float min, float max ) {
                 if (val < min) return min; else if (val > max) return max; else return val; 
             }
+            
+            public static float negate( float val ) { return val * -1.0f; }
         }
 
         // ref.six - vector - 2022-12-16 08:54:02 
