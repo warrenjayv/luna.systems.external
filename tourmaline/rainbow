@@ -1,0 +1,21 @@
+#!/bin/bash
+echo -e "tourmaline:\n verifying colors...\n"
+for (( i = 0; i < 256; i++ )); do 
+   printf '\033[;2;0;0;%dm[%x]\033[0m' "$i" "$i"
+done
+echo -e '\n'
+echo -e "tourmaline:\n select a color above (in hex)"
+read hexreg
+echo -e " you entered $hexreg"
+hx=$hexreg
+hl=$(echo $hx | wc -c)
+if [ $hl -lt 2 ]; then
+  dx="$((${hx:0:1} * 16**0))"
+fi
+if [ $hl -gt 1 ]; then
+  d1="$((${hx:1:1} * 16**0))"
+  d2="$((${hx:0:1} * 16**1))"
+  dx="$(($d1 + $d2))"
+fi
+printf ' the color is \033[;2;0;0;%dm[%d]\033[0m' "$dx" "$dx";
+echo -e '\n'
