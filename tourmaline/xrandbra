@@ -1,0 +1,8 @@
+#!/bin/bash
+
+echo "tourmaline:\n"
+echo "▣ set brightness (0 to 1)\n"
+read br
+scrn=$(xrandr | grep " connected" | cut -f1 -d " ")
+xrandr --output $scrn --brightness $br
+
