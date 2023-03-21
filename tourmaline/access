@@ -1,0 +1,27 @@
+#!/bin/bash
+
+echo -e "tourmaline\n ▣ establishing connection"
+nmcli dev status
+nmcli radio wifi on
+# nmcli dev wifi list &
+echo -e "tourmaline" 
+echo -e "▣ please enter ssid"
+read id
+echo -e "▣ please enter passkey"
+read -s key
+echo -e "▣ please enter interface"
+read io
+nmcli dev wifi connect "$id" password "$key"
+ret=$?
+if [ $ret -eq 0]; then exit; fi;
+echo -e "tourmaline\n ▣ failed to connect. building network parameter"
+nmcli c delete "$id" 
+nmcli c add type wifi con-name "$id" ssid "$id" 
+nmcli con modify "$id" wifi-sec.key-mgmt wpa-psk
+nmcli con modify "$id" wifi-sec.psk "$key"
+nmcli con up "$id" 
+ret=$?
+if [ $ret -eq 0 ]; then exit; fi; 
+# echo -e "tourmaline\n ▣ network build failed. scanning..."
+# nmcli dev wifi connect "$id" password "$key" hidden yes
+
