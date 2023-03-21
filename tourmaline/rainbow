@@ -9,10 +9,10 @@ read hexreg
 echo -e " you entered $hexreg"
 hx=$hexreg
 hl=$(echo $hx | wc -c)
-if [ $hl -lt 2 ]; then
+if [ $hl -lt 3 ]; then
   dx="$((${hx:0:1} * 16**0))"
 fi
-if [ $hl -gt 1 ]; then
+if [ $hl -gt 2 ]; then
   d1="$((${hx:1:1} * 16**0))"
   d2="$((${hx:0:1} * 16**1))"
   dx="$(($d1 + $d2))"

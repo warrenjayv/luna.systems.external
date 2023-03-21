@@ -1,0 +1,54 @@
+#!/bin/bash
+# tshark macro table
+
+if [[ "$1" == "-c" ]];
+then 
+  curl https://ipinfo.io/$2
+  exit
+fi
+
+svr="tourmaline"
+echo -e "\033[;2;0;0;2m"
+netstat -uiltl
+echo -e "\033[0m"
+echo -e "\033[0;1;35m"
+echo -e "$svr:\n enter device to scan \033[;0;0;16m(must be root)\033[0m"
+read _dev 
+
+if [[ "$1" == "-h" ]];
+then
+  tshark -i "$_dev" -f "host $2" 
+  exit
+fi
+
+if [[ "$1" == "-s" ]];
+then
+  tshark -i "$_dev" -z "flow,tcp,network"
+fi
+
+#FIXME: file output options
+
+if [[ "$1" == "-tcp" ]];
+then
+  cho "scanning $2 $3"
+  tshark -z "follow,tcp,hex,$2,$3" -T fields -e data -T json -x -P -V
+  exit
+fi
+
+if [[ "$1" == "-udp" ]];
+then 
+  echo "scanning $2 -- $3"
+  tshark -z "follow,udp,hex,$2,$3" -T fields -e data -T json -x -P -V
+  exit
+fi
+
+echo -e "shark [ OPTIONS ] [ ... ]"
+echo -e "OPTIONS"
+echo -e "-s  start scan"
+echo -e "-tcp <hostname1:port> <hostname2:port>"
+echo -e "-udp <hostname1:port> <hostname2:port>"
+echo -e "     show content between host 1 & 2"
+echo -e "-h   <hostname>"
+echo -e "     filter by host"
+echo -e "-c   <hostname>"
+echo -e "     get hostname demographics"
