@@ -9,12 +9,15 @@ fi
 
 svr="tourmaline"
 echo -e "\033[;2;0;0;2m"
-netstat -uiltl
+_env="$(uname -s)"
+case "$_env" in 
+  MINGW64*) echo "mingw64";;
+  LINUX*)   netstat -uiltl;;
+esac
 echo -e "\033[0m"
 echo -e "\033[0;1;35m"
 echo -e "$svr:\n enter device to scan \033[;0;0;16m(must be root)\033[0m"
 read _dev 
-
 if [[ "$1" == "-h" ]];
 then
   tshark -i "$_dev" -f "host $2" 
@@ -42,6 +45,11 @@ then
   exit
 fi
 
+if [[ "$1" == "-p" ]];
+then
+  netstat -aon | grep $2
+fi
+
 echo -e "shark [ OPTIONS ] [ ... ]"
 echo -e "OPTIONS"
 echo -e "-s  start scan"
@@ -52,3 +60,5 @@ echo -e "-h   <hostname>"
 echo -e "     filter by host"
 echo -e "-c   <hostname>"
 echo -e "     get hostname demographics"
+echo -e "-p   <port>"
+echo -e "     scan open ports n in hostname"
