@@ -1,6 +1,9 @@
 #!/bin/bash
 # tshark macro table
 
+_p="\033[;0;0;35m"
+_o="\033[0m"
+
 if [[ "$1" == "-c" ]];
 then 
   curl https://ipinfo.io/$2
@@ -48,8 +51,30 @@ fi
 if [[ "$1" == "-p" ]];
 then
   netstat -aon | grep $2
+  exit 0
 fi
 
+if [[ "$1" == "-n" ]]; 
+then
+  len=$(expr length $2)
+  max=$(expr length "0.0.0.0")
+  if [ $len -lt $max ]; then echo -e "$_p error: expecting ip <xx.xx.xx.0>$_o"; exit; fi; 
+  str1=$2
+  idr=$(($len-1))
+  idi=${str1:$idr:$len}
+  idn=.$idi
+  echo $idn
+  if [[ $idi -ne 0 ]]; then echo -e "$_p error: expecting ip <xx.xx.xx.0>$_o"; exit; fi;
+  str0=`echo "$str1" | sed 's/$idn/.1/'`
+  echo $str0;
+  exit 
+  for i in {1..254}; do
+     str=$(echo str0 | sed 's/.$i/.$(($i+1))/')
+     echo $str
+  done  
+  exit 0
+fi
+  
 echo -e "shark [ OPTIONS ] [ ... ]"
 echo -e "OPTIONS"
 echo -e "-s  start scan"
@@ -62,3 +87,5 @@ echo -e "-c   <hostname>"
 echo -e "     get hostname demographics"
 echo -e "-p   <port>"
 echo -e "     scan open ports n in hostname"
+echo -e "-n   <subnet ip>"
+echo -e "     scan all devices in subnet 'xx.xx.xx.0'"
