@@ -1,6 +1,13 @@
 #!/bin/bash
 
 echo -e "tourmaline\n ▣ establishing connection"
+
+if [[ "$1" == "-n" ]];
+then
+  nmtui
+  exit
+fi
+
 nmcli dev status
 nmcli radio wifi on
 # nmcli dev wifi list &
