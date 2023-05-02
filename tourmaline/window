@@ -1,0 +1,12 @@
+#!/bin/bash
+
+if [[ "$1" == "-m" ]];
+then
+  tasklist /fi "memusage gt '$2'"
+  exit 0
+fi
+
+echo -e "\x0a"
+echo -e "window [OPTIONS] [...]"
+echo -e "-m n "
+echo -e " see memory usage greater than n bytes"
