@@ -2,17 +2,32 @@ using System;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading;
+using System.Diagnostics;
 using System.Text;
+
 using luna.external.netrucks;
+using luna.external.console;
 
 namespace luna {
    namespace external {
        namespace console {
 
+            public static class _EXTERN_FLAGS 
+            {
+                public static bool _DO_LOG                    = false; 
+                public static bool _OUTWRITER_ACTIVE  = false; 
+
+                public static int  _LOG_SPEED                = 500; 
+            }
+
             public class prog  {
               public static _net_param spm = new _net_param();
 
-              static void Main(string[] args) { helper(); }
+              static void Main(string[] args) 
+              { 
+                helper(); 
+            
+              }
 
               public static void start_server () {
                   Thread thread = new Thread(server); thread.Start(); 
@@ -76,13 +91,15 @@ namespace luna {
               } // server ( ) { }
 
               // helper statements
-              public static string[] command_names = { "help", "run", "set port", "set ip", "quit" };
+              public static string[] command_names = { "help", "run", "set port", "set ip", "do log", "diagnose", "quit" };
               public static string[] command_defs  = 
                 { 
                   "list all available commands",
                   "runs the server",
                   "sets the server port",
                   "set the server ip",
+                  "write to file 'out.log'",
+                  "developer check",
                   "closes the application"
                 };
 
@@ -90,6 +107,31 @@ namespace luna {
                   for (int i = 0; i < command_names.Length; i++ ) {
                       write( String.Format("{0,8} {1} {2,-1}", command_names[i], " - ", command_defs[i]), color.blue);
                   }
+              }
+
+              public static void do_log ( ) 
+              {    
+                  _EXTERN_FLAGS._DO_LOG = ! _EXTERN_FLAGS._DO_LOG; 
+
+                  if (! _EXTERN_FLAGS._OUTWRITER_ACTIVE) 
+                  {
+                     Thread thread = new Thread(outwriter.daemon); thread.Start(); 
+                      if (thread.IsAlive) 
+                      {
+                         write("outwriter daemon started.", color.mag);
+                         _EXTERN_FLAGS._OUTWRITER_ACTIVE = true; 
+                      }
+                  }
+              }
+
+              public static void diagnosis( ) 
+              {
+                  string diag = "\n";
+                  diag += "threads: " + Process.GetCurrentProcess( ).Threads.Count.ToString( ) + "\n";
+                  diag += "flags\n";
+                  diag +="logs: "                          +  _EXTERN_FLAGS._DO_LOG.ToString( )                    + '\n';
+                  diag +="writer thread active?: " + _EXTERN_FLAGS._OUTWRITER_ACTIVE.ToString( )   + '\n';
+                  write(diag, color.mag);
               }
 
               public static void helper ( ) 
@@ -119,9 +161,15 @@ namespace luna {
                     case "set ip":
                         select_ip_address();
                         break;
+                    case "do log":
+                        do_log();
+                        break;
+                    case "diagnose":
+                        diagnosis();
+                        break;
                     case "quit":
                        Environment.Exit(0);
-                       break;
+                       break;   
                     default:
                        write("invalid selection. see help", color.red);
                        break;
@@ -129,18 +177,23 @@ namespace luna {
               }
 
               public static void log(string msg) {
-                Console.WriteLine(typeof(prog) + " " + DateTime.Now.ToString() + ": " + msg);
+                string decore =  typeof(prog) + " " + DateTime.Now.ToString( ) + ": " + msg; 
+                Console.WriteLine(decore); 
+                outwriter.update(decore);
               }
 
               public static void log(string msg, ConsoleColor c) {
                 color.set(c);
-                Console.WriteLine(typeof(prog) + " " + DateTime.Now.ToString() + ": " + msg);
+                string decore = typeof(prog) + " " + DateTime.Now.ToString( ) + ": " + msg; 
+                Console.WriteLine(decore);
+                 outwriter.update(decore);
                 color.set(color.white);
               }
 
               public static void write(string msg, ConsoleColor c) {
                 color.set(c);
-                Console.WriteLine(msg);
+                Console.WriteLine(msg); 
+                outwriter.update(msg); 
                 color.set(color.white);
               }
 
@@ -148,6 +201,17 @@ namespace luna {
                 color.set(c1); Console.Write(word1);
                 color.set(c2); Console.Write(word2);
                 color.set(color.white); Console.WriteLine("");
+              }
+
+              public static void write_out(string msg) 
+              {
+                  if (_EXTERN_FLAGS._DO_LOG )
+                  {
+                      using (var sw = new StreamWriter("out.log", true))
+                      {
+                        sw.Write(msg);
+                      }
+                  }
               }
 
               public static void split_write (string msg, ConsoleColor c) {
@@ -260,6 +324,7 @@ namespace luna {
                    Console.WriteLine(typeof(InvalidSelectionException) + " " + DateTime.Now.ToString() + ": " + msg);
                    color.set(color.white);
               } 
+
             }//InvalidSelectionException { } 
 
           }//console{} 
@@ -282,6 +347,11 @@ namespace luna {
                       this.is_port_set          = false;
                    }
               }
+          }
+
+          public static class assert 
+          {
+              public static bool is_null<T>(T arg) { if (arg == null ) return true; else return false; }
           }
    }
 }
