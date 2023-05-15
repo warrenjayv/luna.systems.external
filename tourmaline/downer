@@ -1,3 +1,34 @@
 #!/bin/bash
 
-ffmpeg -i $1 -b:v 0.5M -vf scale=640:320 $2
+PAR="$1" 
+
+HELP="downer [OPTIONS] file_in file_out\n"
+HELP+="   'file_in/out' expects (.mp4) format\n"
+HELP+=" -h help\n"
+HELP+="    lists options\n"
+HELP+=" -d <file_in> <file_out>\n"
+HELP+="    scale 'file_in' to 640:320 with 1MB bitrate\n"
+HELP+=" -c file_list.txt <file_out>\n"
+HELP+="    concatenate video files\n"
+HELP+="    # file_list.txt (example)\n"
+HELP+="    file 'path_to_file1\n"
+HELP+="    file 'path_to_file2\n"
+HELP+="    file 'path_to_file<n>\n"
+
+if [[ -z $1 || -z $2 || -z $3 ]]; then
+  echo -e "$HELP"; exit;
+fi
+
+
+case $PAR in 
+  -h) 
+    echo "$HELP"
+    ;;
+  -d)
+    ffmpeg -i $2 -b:v 1.0M -vf scale=640:320 $3
+    ;;
+  -c)
+    ffmpeg -f concat -safe 0 -i $2 -c copy $3
+    ;; 
+esac
+
