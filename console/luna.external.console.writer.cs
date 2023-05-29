@@ -21,7 +21,7 @@ namespace luna
               while(true)
               {
                   write_to_log( ); 
-                  Thread.Sleep(_EXTERN_FLAGS._LOG_SPEED);
+                  //Thread.Sleep(_EXTERN_FLAGS._LOG_SPEED);
               }
                 
             } 
@@ -30,32 +30,24 @@ namespace luna
             {
                 if (_EXTERN_FLAGS._DO_LOG) 
                 { 
-                    FileStream stream = new FileStream
-                    (
-                        logfile,
-                        FileMode.OpenOrCreate,
-                        FileAccess.ReadWrite, 
-                        FileShare.None
-                    );
-
-                    // check for duplicate
-                    using (var sr = new StreamReader( stream )) 
+      
+                    // avoid  duplicates
+                    if (File.Exists(logfile)) 
                     {
-                        string rdr = sr.ReadToEnd( );
-                        if(rdr.Contains(log)) 
-                        {
-                            sr.Close( );
-                            return;
-                        }
-
+                      string cs = File.ReadAllText(logfile); 
+                      if(cs.Contains(log)) { return; }
                     }
-                   
+
                     // append to log file 
                     using (var sw = File.AppendText(logfile))
                     {
                         sw.Write(log + "\n");
                         sw.Close();
+                        
                     }
+
+                    log = " ";
+
                 }
             }
 
