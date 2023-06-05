@@ -8,13 +8,15 @@ HELP+=" -h help\n"
 HELP+="    lists options\n"
 HELP+=" -d <file_in> <file_out>\n"
 HELP+="    scale 'file_in' to 640:320 with 1MB bitrate\n"
+HELP+=" -b <bitrate>M <file_in> <file_out>\n"
+HELP+="    scale 'file_in' to 640:320 with bitrate M\n"
 HELP+=" -c file_list.txt <file_out>\n"
 HELP+="    concatenate video files\n"
 HELP+="    # file_list.txt (example)\n"
 HELP+="    file 'path_to_file1\n"
 HELP+="    file 'path_to_file2\n"
 HELP+="    file 'path_to_file<n>\n"
-HELP+=" -s H:M:S <file_in>"
+HELP+=" -s H:M:S <file_in>\n"
 HELP+="    splits video inti segments based on time format H:M:S
            to output<n> where n is number of splits"
 
@@ -31,10 +33,14 @@ case $PAR in
   -d)
     ffmpeg -i $2 -b:v 1.0M -vf scale=640:320 $3
     ;;
+  -b)
+    ffmpeg -i $3 -b:v $2M -vf scale=640:320 $4
+    ;;
   -c)
     ffmpeg -f concat -safe 0 -i $2 -c copy $3
     ;; 
   -s)
     ffmpeg -i $3 -c copy -map 0 -segment_time $2 -f segment output%03d.mp4
+    ;;
 esac
 
