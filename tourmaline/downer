@@ -2,7 +2,7 @@
 
 PAR="$1" 
 
-HELP="downer [OPTIONS] file_in file_out\n"
+HELP="downer [OPTIONS] <file_in> <file_out>\n"
 HELP+="   'file_in/out' expects (.mp4) format\n"
 HELP+=" -h help\n"
 HELP+="    lists options\n"
@@ -14,6 +14,10 @@ HELP+="    # file_list.txt (example)\n"
 HELP+="    file 'path_to_file1\n"
 HELP+="    file 'path_to_file2\n"
 HELP+="    file 'path_to_file<n>\n"
+HELP+=" -s H:M:S <file_in>"
+HELP+="    splits video inti segments based on time format H:M:S
+           to output<n> where n is number of splits"
+
 
 if [[ -z $1 || -z $2 || -z $3 ]]; then
   echo -e "$HELP"; exit;
@@ -30,5 +34,7 @@ case $PAR in
   -c)
     ffmpeg -f concat -safe 0 -i $2 -c copy $3
     ;; 
+  -s)
+    ffmpeg -i $3 -c copy -map 0 -segment_time $2 -f segment output%03d.mp4
 esac
 
