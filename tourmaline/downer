@@ -40,7 +40,7 @@ case $PAR in
     ffmpeg -f concat -safe 0 -i $2 -c copy $3
     ;; 
   -s)
-    ffmpeg -i $3 -c copy -map 0 -segment_time $2 -f segment output%03d.mp4
+    ffmpeg -i $3 -c copy -map 0 -segment_time $2 -f segment -reset_timestamps 1 output%03d.mp4
     ;;
 esac
 
