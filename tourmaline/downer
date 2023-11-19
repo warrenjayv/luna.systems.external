@@ -17,8 +17,11 @@ HELP+="    file 'path_to_file1\n"
 HELP+="    file 'path_to_file2\n"
 HELP+="    file 'path_to_file<n>\n"
 HELP+=" -s H:M:S <file_in>\n"
-HELP+="    splits video inti segments based on time format H:M:S
-           to output<n> where n is number of splits"
+HELP+="    splits video inti segments based on time format H:M:S\n
+           to output<n> where n is number of splits\n"
+HELP+=" -v saturation (0.0-3.0) <file_in> <file_out>\n"
+HELP+="    set video saturation"
+
 
 
 if [[ -z $1 || -z $2 || -z $3 ]]; then
@@ -41,6 +44,9 @@ case $PAR in
     ;; 
   -s)
     ffmpeg -i $3 -c copy -map 0 -segment_time $2 -f segment -reset_timestamps 1 output%03d.mp4
+    ;;
+  -v)
+    ffmpeg -i $3 -vf eq=brightness=0.0:saturation=$2 -c:a copy $4
     ;;
 esac
 
