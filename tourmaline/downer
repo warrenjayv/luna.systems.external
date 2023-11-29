@@ -9,7 +9,7 @@ HELP+="    lists options\n"
 HELP+=" -d <file_in> <file_out>\n"
 HELP+="    scale 'file_in' to 640:320 with 1MB bitrate\n"
 HELP+=" -b <bitrate>M <file_in> <file_out>\n"
-HELP+="    scale 'file_in' to 640:320 with bitrate M\n"
+HELP+="    scale 'file_in' with bitrate M\n"
 HELP+=" -c file_list.txt <file_out>\n"
 HELP+="    concatenate video files\n"
 HELP+="    # file_list.txt (example)\n"
@@ -36,8 +36,11 @@ case $PAR in
   -d)
     ffmpeg -i $2 -b:v 1.0M -vf scale=640:320 $3
     ;;
-  -b)
+  -br)
     ffmpeg -i $3 -b:v $2M -vf scale=640:320 $4
+    ;;
+  -b)
+    ffmpeg -i $3 -b:v $2M $4
     ;;
   -c)
     ffmpeg -f concat -safe 0 -i $2 -c copy $3
