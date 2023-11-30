@@ -6,8 +6,8 @@ HELP="downer [OPTIONS] <file_in> <file_out>\n"
 HELP+="   'file_in/out' expects (.mp4) format\n"
 HELP+=" -h help\n"
 HELP+="    lists options\n"
-HELP+=" -d <file_in> <file_out>\n"
-HELP+="    scale 'file_in' to 640:320 with 1MB bitrate\n"
+HELP+=" -d <scale factor> <file_in> <file_out>\n"
+HELP+="    scale 'file_in' by 'scale factor' ( divides )\n" 
 HELP+=" -b <bitrate>M <file_in> <file_out>\n"
 HELP+="    scale 'file_in' with bitrate M\n"
 HELP+=" -c file_list.txt <file_out>\n"
@@ -34,7 +34,7 @@ case $PAR in
     echo "$HELP"
     ;;
   -d)
-    ffmpeg -i $2 -b:v 1.0M -vf scale=640:320 $3
+    ffmpeg -i $3 -vf scale=iw/$2:ih/$2 $4
     ;;
   -br)
     ffmpeg -i $3 -b:v $2M -vf scale=640:320 $4
