@@ -17,7 +17,7 @@ namespace luna {
                 public static bool _DO_LOG                    = false; 
                 public static bool _OUTWRITER_ACTIVE  = false; 
 
-                public static int  _LOG_SPEED                = 500; 
+                public static int  _LOG_SPEED                = 10; 
             }
 
             public class prog  {
@@ -32,7 +32,7 @@ namespace luna {
               public static void start_server () {
                   Thread thread = new Thread(server); thread.Start(); 
               }
-              public static void server () {
+              public static async void server () {
 
                   // initialize end point 
                   IPHostEntry host = Dns.GetHostEntry(Dns.GetHostName()); 
@@ -60,30 +60,43 @@ namespace luna {
                           write("  server port: ", color.blue, ((IPEndPoint)local).Port.ToString(), color.green);
                           write("  receiver initiated.",  color.green);
 
-                      Socket? client = recvr.Accept(); 
+                      //Socket? client = recvr.Accept(); 
+                      var handler = await recvr.AcceptAsync( );
+                      
                       // server loop 
-                      while(true) {
+                      while(true) 
+                      {
                             byte[]  bytes = new Byte[spm.buffer_length];
-                            string? data   = null;
-                            int _bytes     = 0;
+                            var received = await handler.ReceiveAsync(bytes, SocketFlags.None);
+                            var response = Encoding.UTF8.GetString(bytes, 0, received);
+                            var eom = "<|EOM|>";
+                            //string? data   = null;
+                            //int _bytes     = 0;
+                            if (response.IndexOf(eom) > -1 ) 
+                            {
+                               log("data received.  ", color.blue);
+                               write(response, color.mag); 
 
-                            while(true) {
-                                 _bytes = client.Receive(bytes);
-                                 data += Encoding.ASCII.GetString(bytes, 0, _bytes);
-
-                                 //if(data.IndexOf("<EOF>") > -1) break; 
-                                if (_bytes > 0) { break; }
                             }
+                            
 
-                            if(data != null) { 
-                                log("data received; size: " + _bytes.ToString() + " bytes", color.blue);
-                                write( data, color.mag);
-                                //split_write(data, color.mag);
-                            }
+                            // while(true) {
+                            //      _bytes = client.Receive(bytes);
+                            //      data += Encoding.ASCII.GetString(bytes, 0, _bytes);
+
+                            //      //if(data.IndexOf("<EOF>") > -1) break; 
+                            //     if (_bytes > 0) { break; }
+                            // }
+
+                            // if(data != null) { 
+                            //     log("data received; size: " + _bytes.ToString() + " bytes", color.blue);
+                            //     write( data, color.mag);
+                            //     //split_write(data, color.mag);
+                            // }
                       }
 
-                      client.Shutdown(SocketShutdown.Both);
-                      client.Close();
+                      //client.Shutdown(SocketShutdown.Both);
+                      //client.Close();
                    }
                   catch (Exception e) {
                     log(e.ToString(), color.red);
