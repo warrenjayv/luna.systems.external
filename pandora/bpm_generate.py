@@ -14,7 +14,7 @@ def main():
 
   # entry
   # print("bpm " + "%X" % start)
-  file.write("bpm " + "%X" % start + "\n")
+  file.write("bpx " + "%X" % start + ",\"%X" % start + "\"\n")
   
   # determine size
   size = int(( end - start ) / step); 
@@ -24,7 +24,9 @@ def main():
   for x in range(size):
     val = val + step
     # print("bpm " + "%X" % val)
-    file.write("bpm " + "%X" % val + "\n")
+    file.write("bpx " + "%X" % val + ",\"%X" % val + "\"\n")
+
+  file.close()
   
 main( )
 
