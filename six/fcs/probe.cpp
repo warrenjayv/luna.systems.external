@@ -49,7 +49,7 @@ int main ( )
 
     HANDLE proc = OpenProcessByID ( (DWORD) pID );
 
-    ListModules(proc);
+    // ListModules(proc);
 
     cin >> pID;
 

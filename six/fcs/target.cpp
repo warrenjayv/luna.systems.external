@@ -3,6 +3,8 @@
  */
 #include <string>
 #include <iostream>
+#include <sys/unistd.h>
+#include <sstream>
 
 enum sexm { male, female };
 
@@ -30,10 +32,16 @@ class dummy
 
 int main ( )
 { 
-     dummy a1 = dummy( "alyssa", 24, female );
-     a1.tostring( );
+   dummy a1 = dummy( "alyssa", 24, female );
+    a1.tostring( );
+    // int *x = &dummy::tostring;
+    void (dummy::* f)() = &dummy::tostring;
+    std::stringstream ss;
+    ss << (void*&) f;
+    std::cout << "address: " + ss.str() << std::endl;
     do
     {
-        
+      sleep(3);
+      sleep(1);
     } while (true);
 }
