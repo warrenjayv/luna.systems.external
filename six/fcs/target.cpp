@@ -5,6 +5,7 @@
 #include <iostream>
 #include <sys/unistd.h>
 #include <sstream>
+#include <unistd.h>
 
 enum sexm { male, female };
 
@@ -34,10 +35,13 @@ int main ( )
 { 
    dummy a1 = dummy( "alyssa", 24, female );
     a1.tostring( );
+    a1.tostring( );
+    a1.tostring( );
     // int *x = &dummy::tostring;
     void (dummy::* f)() = &dummy::tostring;
+    dummy *test = &a1;
     std::stringstream ss;
-    ss << (void*&) f;
+    ss << test;
     std::cout << "address: " + ss.str() << std::endl;
     do
     {
