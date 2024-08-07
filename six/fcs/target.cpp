@@ -1,11 +1,11 @@
-/*  dummy process
- * 
- */
+
 #include <string>
 #include <iostream>
 #include <sys/unistd.h>
 #include <sstream>
 #include <unistd.h>
+#include <bits/stdc++.h>
+
 
 enum sexm { male, female };
 
@@ -37,12 +37,18 @@ int main ( )
     a1.tostring( );
     a1.tostring( );
     a1.tostring( );
-    // int *x = &dummy::tostring;
-    void (dummy::* f)() = &dummy::tostring;
-    dummy *test = &a1;
+    void (dummy::* fptr)() = &dummy::tostring;
+    // dummy *test = &a1;
     std::stringstream ss;
-    ss << test;
-    std::cout << "address: " + ss.str() << std::endl;
+    ss << (void*)fptr;
+    std::cout << ss.str() << std::endl;
+    /*
+    __asm__
+   (
+    "lea 320(%rbp),%rax;"
+    "mov %rax, %rcx;"
+   );
+   */
     do
     {
       sleep(3);
