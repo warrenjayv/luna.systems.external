@@ -16,6 +16,7 @@ DWORD ListModules(const HANDLE hProcess)
     if( hProcess == NULL) { return NULL; }
 
     HMODULE lpModule[1024];
+    MODULEINFO moduleInfo;
     DWORD   lpcbNeed;
     uint32_t i = 0;
 
@@ -33,6 +34,14 @@ DWORD ListModules(const HANDLE hProcess)
         {
             cout << "error!";
         }
+    
+        // obtain module information
+        if (GetModuleInformation(hProcess, lpModule[i], &moduleInfo, sizeof(moduleInfo)))
+        {
+           cout << "module name: " << moduleInfo.lpBaseOfDll << endl;
+           cout << "base address: 0x" << hex << moduleInfo.lpBaseOfDll << endl;
+        }
+  
         wcout << modName << endl;
     }
     
@@ -49,7 +58,7 @@ int main ( )
 
     HANDLE proc = OpenProcessByID ( (DWORD) pID );
 
-    // ListModules(proc);
+    ListModules(proc);
 
     cin >> pID;
 
