@@ -1,6 +1,3 @@
-/*  dummy process
- * 
- */
 #include <string>
 #include <iostream>
 #include <sys/unistd.h>
@@ -33,7 +30,13 @@ class dummy
 
 int main ( )
 { 
+
+   // process id 
+   pid_t pid = getpid();
+   std::cout << "process id: " << pid << std::endl;    
+
    dummy a1 = dummy( "alyssa", 24, female );
+
     a1.tostring( );
     a1.tostring( );
     a1.tostring( );
