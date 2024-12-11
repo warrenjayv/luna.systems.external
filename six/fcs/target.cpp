@@ -3,6 +3,7 @@
 #include <sys/unistd.h>
 #include <sstream>
 #include <unistd.h>
+using namespace std;
 
 enum sexm { male, female };
 
@@ -12,7 +13,7 @@ class dummy
         std::string name;
         int    age;
         sexm   sex;
-        
+
         dummy ( ) { }
 
         dummy ( std::string _n, int _a, sexm _s)
@@ -28,6 +29,22 @@ class dummy
         }
 };
 
+class seer 
+{
+  public: 
+    static void see( string &a, int& b, sexm& c )
+    {
+       std::stringstream ss;
+       ss << &a; ss << " ";
+       ss << &b; ss << " ";
+       ss << &c;   
+
+       std::cout << ss.str( ) << std::endl; 
+    }
+
+    seer() = delete;
+};
+
 int main ( )
 { 
 
@@ -37,18 +54,23 @@ int main ( )
 
    dummy a1 = dummy( "alyssa", 24, female );
 
-    a1.tostring( );
-    a1.tostring( );
-    a1.tostring( );
-    // int *x = &dummy::tostring;
-    void (dummy::* f)() = &dummy::tostring;
-    dummy *test = &a1;
-    std::stringstream ss;
-    ss << test;
-    std::cout << "address: " + ss.str() << std::endl;
-    do
-    {
-      sleep(3);
-      sleep(1);
-    } while (true);
+   a1.tostring( );
+   a1.tostring( );
+   a1.tostring( );
+
+   // int *x = &dummy::tostring;
+   void (dummy::* f)() = &dummy::tostring;
+   dummy *test = &a1;
+   std::stringstream ss;
+   ss << test;
+   std::cout << "address: " + ss.str() << std::endl;
+  
+   // reveal member addresses 
+   seer::see(test->name, test->age, test->sex); 
+  
+   do
+   {
+     sleep(3);
+     sleep(1);
+   } while (true);
 }
