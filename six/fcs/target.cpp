@@ -35,6 +35,7 @@ class seer
     static void see( string &a, int& b, sexm& c )
     {
        std::stringstream ss;
+
        ss << &a; ss << " ";
        ss << &b; ss << " ";
        ss << &c;   
