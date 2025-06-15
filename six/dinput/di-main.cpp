@@ -17,7 +17,7 @@ int main ( )
     IDirectInput* di = NULL;
     IDirectInputDevice* controller;
 
-    HRESULT hr = DirectInput8Create( GetModuleHandle(NULL), DIRECTINPUT_VERSION, IID_IDirectInput, (void**) &di, NULL );
+    //HRESULT hr = DirectInput8Create( GetModuleHandle(NULL), DIRECTINPUT_VERSION, IID_IDirectInput, (void**) &di, NULL );
   
     using util::aut; using util::col;
     // aut::write((char*)"test", col::red );

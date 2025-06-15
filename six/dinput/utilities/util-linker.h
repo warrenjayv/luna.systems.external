@@ -3,38 +3,63 @@
 
 #include <windows.h>
 #include <iostream>
+#include <string>
 
 #include "util-writer.h"
 
 
 namespace util
 {
-  // return flags
-  static const int LUERR = -1;
-  static const int LUGUD =  0;
 
   class linker
   {
     public:
-      static int load(char* dllpath)
+      typedef void (*di8dll)(); 
+      
+      static di8dll *di8_create;
+      
+      static HMODULE load(char* dllpath)
       {
-        HMODULE hmod = LoadLibraryEx((const CHAR*)dllpath, NULL, 0);
+        wchar_t wide_dll[MAX_PATH];
+        mbstowcs(wide_dll, dllpath, strlen(dllpath) + 1);
+
+        HMODULE hmod = LoadLibraryExW(wide_dll, NULL, 0);
         if ( hmod == NULL )
         {
-           aut::write("linker: unable to load dll: ", dllpath, col::red );
-           return LUERR;
+           aut::write("linker: unable to load dll: ", (char *)dllpath, col::red );
+           return hmod;
         } 
         
-        return LUGUD;
+        return hmod;
+      }
+
+      static int load_methods( HMODULE hmod )
+      {
+        if (hmod == NULL) { return -1; }
+      
+        linker::di8_create =  (di8dll*) GetProcAddress(hmod, "DirectInput8Create ");
+        
+      }
+
+      static int status(di8dll *func )
+      {
+      
+        if ( func != NULL)
+        {
+           aut::write("linker::loaded()->", (char *)func, col::green);
+        }
+        else
+        {
+          char * _fl = ": failed to LOAD";
+          std::string res = (char*)func + std::string(_fl);
+          aut::write("linker::loaded()->", (char *)func, col::red);
+        }
+
+        return 0;
       }
   };
-/* #include <windows.h>
 
-int main() {
-    wchar_t* dll_name = L"mydll.dll";
-    hmodule hmodule = loadlibraryex(dll_name, null, loadlibraryex);
-    return 0;
-    */
+
 
 }
 
