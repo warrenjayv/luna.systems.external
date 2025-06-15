@@ -1,0 +1,12 @@
+SAT, 10 - 21 - 2024 
+
+2197 discovered instruction at 
+-- 0x7ff686f02e50<_zN5dummy8tostringEv>
+2142 '-exec info address main' to get root address
+-- how do we obtain this automatically?
+ • the first variable gives an idea of stack base address
+ + see rsp or rbp. 
+2157 view array like this 
+-- p *array@len
+-- *(T (*)[N])p 
+-- (gdb) x/100w a
