@@ -1,5 +1,7 @@
 #include <dinput.h>
 
+#include "header/di-error.h";
+
 int main ( )
 {
     IDirectInput8* di = NULL;
