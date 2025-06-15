@@ -14,7 +14,7 @@ namespace util
   class linker
   {
     public:
-      typedef int (*di8dll)(); 
+      typedef long (*di8dll)(); 
       
       static di8dll *di8_create;
       
@@ -38,17 +38,20 @@ namespace util
         if (hmod == NULL) { return -1; }
       
         di8_create =  (di8dll*) GetProcAddress(hmod, "DirectInput8Create");
-        status(di8_create);
-        
+        if ( status(*di8_create) < 0 ) { return -1; }
+
+        return 0;
       }
 
-      static int status(di8dll *func )
+      static int status(di8dll func)
       {
-      
-        if ( func != NULL)
+        
+        if ( func != NULL )
         {
-           aut::write("linker::load()->", (char *)func, col::green);
-           return 0;
+           char* _hex = new char[64];
+           sprintf(_hex, "%x", func);
+           aut::write("linker::load()->", _hex, col::green);
+           return 1;
         }
         else
         {
@@ -56,12 +59,12 @@ namespace util
           return -1;
         }
 
+        return 0;
+
       }
   };
 
   util::linker::di8dll* util::linker::di8_create = nullptr;
-
-
 
 }
 
