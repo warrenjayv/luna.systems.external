@@ -10,11 +10,11 @@
 
 namespace util
 {
-
+   
   class linker
   {
     public:
-      typedef void (*di8dll)(); 
+      typedef int (*di8dll)(); 
       
       static di8dll *di8_create;
       
@@ -37,7 +37,8 @@ namespace util
       {
         if (hmod == NULL) { return -1; }
       
-        linker::di8_create =  (di8dll*) GetProcAddress(hmod, "DirectInput8Create ");
+        di8_create =  (di8dll*) GetProcAddress(hmod, "DirectInput8Create");
+        status(di8_create);
         
       }
 
@@ -46,18 +47,19 @@ namespace util
       
         if ( func != NULL)
         {
-           aut::write("linker::loaded()->", (char *)func, col::green);
+           aut::write("linker::load()->", (char *)func, col::green);
+           return 0;
         }
         else
         {
-          char * _fl = ": failed to LOAD";
-          std::string res = (char*)func + std::string(_fl);
-          aut::write("linker::loaded()->", (char *)func, col::red);
+          aut::write("linker::load()-> fail! <NULL> method", col::red);
+          return -1;
         }
 
-        return 0;
       }
   };
+
+  util::linker::di8dll* util::linker::di8_create = nullptr;
 
 
 

@@ -12,7 +12,7 @@ int main ( )
 {
      
     using util::linker;
-    linker::load("C:\\WINDOWS\\System32\\dinput.dll");
+    linker::load_methods( linker::load("C:\\WINDOWS\\System32\\dinput.dll"));
 
     IDirectInput* di = NULL;
     IDirectInputDevice* controller;
