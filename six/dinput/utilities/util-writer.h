@@ -1,3 +1,6 @@
+#ifndef UTIL_WRITER_H
+#define UTIL_WRITER_H
+
 #include <iostream>
 #include <string>
 
@@ -50,6 +53,12 @@ namespace util
             
           std::cout << color << msg << col::def  << std::endl;
         }
+
+        static void write( char* a, char* b, const char* color )
+        {
+          std::cout << color << a << b << col::def  << std::endl;
+        }
   };
 };
 
+# endif
