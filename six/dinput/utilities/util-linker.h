@@ -39,10 +39,10 @@ namespace util
         if (hmod == NULL) { return -1; }
       
         di8_create =  (di8dll*) GetProcAddress(hmod, "DirectInput8Create");
-        if ( status(*di8_create) < 0 ) { return -1; }
+        //if ( status(*di8_create) < 0 ) { return -1; }
 
         di8_createDevice = (di8dll*) GetProcAddress(hmod, "CreateDevice");
-        if ( status(*di8_createDevice) < 0 ) { return -1; }
+        //if ( status(*di8_createDevice) < 0 ) { return -1; }
 
         return 0;
       }

@@ -2,6 +2,7 @@
 #define DI_M_H
 
 #include <dinput.h>
+
 #include "../utilities/util-linker.h";
 #include "../utilities/util-writer.h";
 

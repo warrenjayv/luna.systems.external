@@ -1,6 +1,8 @@
 #ifndef UTIL_WRITER_H
 #define UTIL_WRITER_H
 
+#pragma once
+
 #include <iostream>
 #include <string>
 
