@@ -17,6 +17,7 @@ namespace util
       typedef long (*di8dll)(); 
       
       static di8dll *di8_create;
+      static di8dll *di8_createDevice;
       
       static HMODULE load(char* dllpath)
       {
@@ -39,6 +40,9 @@ namespace util
       
         di8_create =  (di8dll*) GetProcAddress(hmod, "DirectInput8Create");
         if ( status(*di8_create) < 0 ) { return -1; }
+
+        di8_createDevice = (di8dll*) GetProcAddress(hmod, "CreateDevice");
+        if ( status(*di8_createDevice) < 0 ) { return -1; }
 
         return 0;
       }
@@ -64,7 +68,8 @@ namespace util
       }
   };
 
-  util::linker::di8dll* util::linker::di8_create = nullptr;
+  util::linker::di8dll* util::linker::di8_create       = nullptr;
+  util::linker::di8dll* util::linker::di8_createDevice = nullptr; 
 
 }
 
