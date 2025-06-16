@@ -2,6 +2,7 @@
 #include <initguid.h>
 
 #include "header/di-error.h"
+#include "header/di-mouse.h"
 #include "utilities/util-writer.h"
 #include "utilities/util-linker.h"
 
