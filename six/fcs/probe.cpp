@@ -3,6 +3,7 @@
 #include <Windows.h>
 #include <memoryapi.h>
 #include <psapi.h>
+#include <cstdint>
 
 using namespace std;
 
