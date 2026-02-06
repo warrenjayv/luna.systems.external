@@ -37,6 +37,10 @@ export PS1="\[\e[34m\]$(date)\a\]\e[36m\]$(pwd)/\e[0m\]\n\[\e[32m\]battle_angel\
 alias src='source ~/.bashrc'  
 alias yt='yt-dlp.exe -x --audio-format m4a'
 
+ytsmall() {
+  yt-dlp.exe -S "+size,+br,+res" --download-sections "*$1" "$2"
+}
+
 export DARK="/d/umbraproeliator drive/darkman_interactive"
 export LUNA="/d/umbraproeliator drive/darkman_interactive/raiderone.di/Assets/project.lw/scripts.lw"
 export LUNA_EX="/d/umbraproeliator drive/darkman_interactive/raiderone.di/Packages/luna.external/luna.systems.external/"
