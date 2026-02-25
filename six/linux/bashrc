@@ -40,8 +40,9 @@ alias yt='yt-dlp.exe -x --audio-format m4a'
 ytsmall() {
   local _path="C:\cookies\yt.txt"
   local _fmt="+size,+br,+res"
+  local _deno="C:\ProgramData\chocolatey\lib\deno.exe" 
   yt-dlp.exe --cookies "$_path" --list-formats $1
-  yt-dlp.exe --no-check-certificates --cookies "$_path" -S "$_fmt" --download-sections "*$1" "$2"
+  yt-dlp.exe --js-runtimes "$_deno" --no-check-certificates -S "$_fmt" --download-sections "*$1" "$2"
 }
 
 export DARK="/d/umbraproeliator drive/darkman_interactive"
