@@ -9,6 +9,6 @@ compile : main.cpp cas.cpp
 
 clean :
 	@if [ -n "$(wildcard *.err)" ]; then rm "$(wildcard *.err)"; fi
-	@rm *exe
+	@rm -f $(EXES)
 	@if [ -n "$(OS)" ]; then rm "$(OS)"; fi
 	@echo -e "\033[32mclean complete.\033[37m"
