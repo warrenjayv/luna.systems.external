@@ -21,8 +21,13 @@ let _ctxt : Text;
   app.stage.addChild(_ctxt);
 
   // first point ( need a daemon here )
-  let _pt1 = _pen._crpt(300, 300, 1, 0xFFFFFF, "pmc")
+  let _pt1 = _pen._crpt(150, 150, 1, 0xFFFFFF, "pmc")
   app.stage.addChild(_pt1)
+
+  // daemon
+  setInterval(() => {
+    _temon(_pt1)
+  }, 1000);
 
 })();
 
@@ -41,4 +46,15 @@ function _tecost( ): void {
         _msg += "payload\n";
     }
     _upcost(_msg);
+}
+
+// test daemon
+function _temon( _pti: ReturnType<typeof _pen._crpt> ): void {
+
+
+    let _rx = Math.random() * (window.innerWidth - 20) + 25;
+    let _ry = Math.random() * (window.innerHeight - 20) + 25;
+
+    _pti.position.set(_rx, _ry);
+
 }
