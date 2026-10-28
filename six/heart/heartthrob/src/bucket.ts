@@ -1,41 +1,36 @@
-const koffi = (window as any).require ? (window as any).require('koffi') : eval('require')('koffi');
+
+//\ const koffi = (window as any).require ? (window as any).require('koffi') : eval('require')('koffi');
 import * as _pen from "./pen";
 
-export function _attach( _target : number )
+export function _attach(_target : number)
 {
-    const _k32 = koffi.load('kernel32.dll');
-    const _psa = koffi.load('psapi.dll');
+    //\ worker thread
+    const _wkr = new Worker(new URL('./buc.work.ts', import.meta.url), {
+        type: 'module'
+    });
 
-    const _HAND = koffi.pointer('HANDLE', koffi.opaque());
-    const _HMOD = koffi.pointer('HMODULE', koffi.opaque());
+    //\ start scanner
+    _wkr.postMessage({ type:'START_SCAN', target: _target});
 
-    const OpenProcess = _k32.func('HANDLE __stdcall OpenProcess(uint32_t dwDesiredAccess, bool bInheritHandle, uint32_t dwProcessId)');
-    const CloseHandle = _k32.func('bool __stdcall CloseHandle(HANDLE hObject)');
-    const EnumProcessModules = _psa.func('bool __stdcall EnumProcessModules(HANDLE hProcess, _Out_ void *lphModule, uint32_t cb, _Out_ uint32_t *lpcbNeeded)');
-
-
-    const _PAA = 0x1F0FFF;
-
-    const _HPROC = OpenProcess(_PAA, false, _target);
-
-    if (_HPROC)
-    {
-        _pen._cstr_add(3, "process attached.");
-        const _HMODS = new Uint8Array(1024 * 8);
-        let _CBN = 0;
-
-        if (EnumProcessModules(_HPROC, _HMODS, 1024 * 8, _CBN))
-        {
-            const _BA = koffi.decode(_HMODS, 'uint64_t');
-            _pen._cstr_add(4, 'base address: 0x${_BA.toString(16).toUpperCase()')
-        } else
-        {
-            _pen._cstr_add(5, "failed to enumerate process modules.");
+    //\ listener(s)
+    _wkr.onmessage = (event) => {
+        const { type, code, msg } = event.data;
+        if (type == 'LOG_INFO' || type == 'LOG_ERROR') {
+            _pen._cstr_add(code, msg);
         }
-        CloseHandle(_HPROC)
-    } else 
-    {
-        console.log("process attach failure")
-        _pen._cstr_add(6, "failed to open proccess.");
     }
 }
+
+/*\
+export function _attach_context( _target : number )
+{
+    //\ obtain koffi module
+    const koffi = (window as any).require ? (window as any).require('koffi') : eval('require')('koffi');
+    //\ import * as _pen from "./pen";
+
+    //\ on message method
+    //\ <-- body moved to buc.work.ts --> 
+
+}
+*///
+

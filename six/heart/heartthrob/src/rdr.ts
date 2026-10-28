@@ -2,6 +2,9 @@ import { Application, Text } from "pixi.js";
 import * as _pen from "./pen";
 import * as _buc from "./bucket";
 
+// worker threads
+
+
 // parameters
 let _ctxt : Text;
 
@@ -28,7 +31,8 @@ let _ctxt : Text;
   // initialize console record
   _pen._cstr_test();
 
-  // attach to target process
+  // attach to target process 
+  // fixme: moved to another tread
   try 
   {
     setTimeout(()=> {
