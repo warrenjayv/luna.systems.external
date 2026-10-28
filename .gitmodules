@@ -1,3 +1,4 @@
 [submodule "six/heart/edk2"]
 	path = six/heart/edk2
 	url = git@github.com:tianocore/edk2.git
+  ignore = all
