@@ -1,5 +1,8 @@
 import { Text, Assets, Sprite, TextStyle, Graphics, Container } from "pixi.js";
 
+// console structure
+let _cstr : Record<number, string> = {}
+
 // console style
 export const _cost = new TextStyle({
     fontFamily: 'Arial',
@@ -39,4 +42,23 @@ export function _crpt(_x: number, _y: number, _r: number, _hc: number, _lb: stri
     return _cr;
 }
 
+export function _cstr_add( _i: number, _v: string): void {
+    _cstr[_i] = _v;
+}
 
+export function _cstr_get_all(): string {
+    let _tmp = "";
+    for(const key in _cstr)
+    {
+        _tmp += _cstr[key] + "\n";
+    }
+    return _tmp;
+}
+
+export function _cstr_test(): void {
+    _cstr = {
+        0: "console initalized.\n",
+        1: "ready to populate.\n",
+        2: "..."
+    };
+}

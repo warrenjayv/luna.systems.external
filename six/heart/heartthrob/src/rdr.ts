@@ -24,9 +24,13 @@ let _ctxt : Text;
   let _pt1 = _pen._crpt(150, 150, 1, 0xFFFFFF, "pmc")
   app.stage.addChild(_pt1)
 
+  // initialize console record
+  _pen._cstr_test()
+
   // daemon
   setInterval(() => {
-    _temon(_pt1)
+    // _temon(_pt1)
+    _upcost( _pen._cstr_get_all() )
   }, 1000);
 
 })();
