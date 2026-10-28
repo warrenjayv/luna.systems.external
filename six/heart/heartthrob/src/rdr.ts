@@ -1,5 +1,6 @@
 import { Application, Text } from "pixi.js";
 import * as _pen from "./pen";
+import * as _buc from "./bucket";
 
 // parameters
 let _ctxt : Text;
@@ -12,7 +13,7 @@ let _ctxt : Text;
   await app.init({ background: "#000e12", resizeTo: window });
 
   // add canvas
-  document.getElementById('app')?.appendChild(app.canvas);
+  document.getElementById('pixi-container')?.appendChild(app.canvas);
 
   // console
   _ctxt = new Text({ text: 'console', style: _pen._cost });
@@ -21,12 +22,26 @@ let _ctxt : Text;
   app.stage.addChild(_ctxt);
 
   // first point ( need a daemon here )
-  let _pt1 = _pen._crpt(150, 150, 1, 0xFFFFFF, "pmc")
-  app.stage.addChild(_pt1)
+  let _pt1 = _pen._crpt(150, 150, 1, 0xFFFFFF, "pmc");
+  app.stage.addChild(_pt1);
 
   // initialize console record
-  _pen._cstr_test()
+  _pen._cstr_test();
 
+  // attach to target process
+  /*
+  try 
+  {
+    setTimeout(()=> {
+        _buc._attach(6228);
+    }, 100);
+  } catch (_err)
+  {
+    _pen._cstr_add(4, "process attachment failed.\n${_err}");
+    console.log("bucket failed to attach.");
+  }
+  */
+ 
   // daemon
   setInterval(() => {
     // _temon(_pt1)

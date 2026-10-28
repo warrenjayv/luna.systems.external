@@ -6,4 +6,12 @@ export default defineConfig({
     port: 8080,
     open: true,
   },
+  optimizeDeps: {
+    exclude: ['koffi']
+  },
+  build: {
+    rollupOptions: {
+      external: ['koffi']
+    }
+  }
 });
