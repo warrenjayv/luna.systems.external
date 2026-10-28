@@ -7,7 +7,8 @@
     "start": "npm run dev",
     "build": "npm run lint && tsc && vite build",
     "lint": "eslint .",
-    "dev": "vite"
+    "dev": "vite",
+    "electron": "electron payload.js"
   },
   "dependencies": {
     "koffi": "^3.3.4",
@@ -15,6 +16,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.21.0",
+    "electron": "^45.1.0",
     "eslint": "^9.21.0",
     "eslint-config-prettier": "^10.1.2",
     "eslint-plugin-prettier": "^5.2.6",
@@ -24,6 +26,7 @@
     "vite": "^6.2.0"
   },
   "allowScripts": {
-    "koffi@3.3.4": true
+    "koffi@3.3.4": true,
+    "electron@45.1.0": true
   }
 }

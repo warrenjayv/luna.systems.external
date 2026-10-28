@@ -29,7 +29,6 @@ let _ctxt : Text;
   _pen._cstr_test();
 
   // attach to target process
-  /*
   try 
   {
     setTimeout(()=> {
@@ -40,8 +39,7 @@ let _ctxt : Text;
     _pen._cstr_add(4, "process attachment failed.\n${_err}");
     console.log("bucket failed to attach.");
   }
-  */
- 
+
   // daemon
   setInterval(() => {
     // _temon(_pt1)
