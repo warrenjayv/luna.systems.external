@@ -2,6 +2,8 @@
 #include <winternl.h>
 #include <iostream>
 #include <cstdlib>
+#include <fstream>
+#include <iomanip>
 
 // Function pointer signatures for NT native APIs
 typedef NTSTATUS(NTAPI* pfnNtOpenProcess)(
@@ -90,6 +92,51 @@ HANDLE SafeOpenProcessRead(DWORD processId) {
     return NULL;
 }
 
+// Native memory range reading function wrapping NtReadVirtualMemory
+bool ReadMemoryRangeNative(HANDLE hProcess, uintptr_t startAddress, uintptr_t finishAddress, unsigned char* outBuffer, SIZE_T bufferSize, SIZE_T* totalBytesRead) {
+    if (finishAddress <= startAddress || bufferSize == 0) return false;
+
+    HMODULE hNtdll = GetNtdllHandle();
+    if (!hNtdll) return false;
+
+    pfnNtReadVirtualMemory NtReadVirtualMemory = (pfnNtReadVirtualMemory)FindExport(hNtdll, "NtReadVirtualMemory");
+    if (!NtReadVirtualMemory) return false;
+
+    uintptr_t currentAddress = startAddress;
+    SIZE_T totalRead = 0;
+    SIZE_T bytesRemaining = finishAddress - startAddress;
+
+    while (currentAddress < finishAddress && totalRead < bufferSize) {
+        SIZE_T bytesToRead = (bytesRemaining < (bufferSize - totalRead)) ? bytesRemaining : (bufferSize - totalRead);
+        SIZE_T bytesReadThisChunk = 0;
+
+        NTSTATUS status = NtReadVirtualMemory(
+            hProcess, 
+            (PVOID)currentAddress, 
+            outBuffer + totalRead, 
+            bytesToRead, 
+            &bytesReadThisChunk
+        );
+
+        if (status >= 0 && bytesReadThisChunk > 0) {
+            totalRead += bytesReadThisChunk;
+            currentAddress += bytesReadThisChunk;
+            bytesRemaining -= bytesReadThisChunk;
+        } else {
+            outBuffer[totalRead] = 0; 
+            totalRead++;
+            currentAddress++;
+            bytesRemaining--;
+        }
+    }
+
+    if (totalBytesRead) {
+        *totalBytesRead = totalRead;
+    }
+
+    return (totalRead > 0);
+}
+
 // New function to read virtual memory using NtReadVirtualMemory
 bool ReadProcessMemoryNative(HANDLE hProcess, LPVOID baseAddress, LPVOID buffer, SIZE_T size, SIZE_T* bytesReadOut = nullptr) {
     HMODULE hNtdll = GetNtdllHandle();
@@ -109,6 +156,40 @@ bool ReadProcessMemoryNative(HANDLE hProcess, LPVOID baseAddress, LPVOID buffer,
     return (status >= 0);
 }
 
+// Updated Hex Dump function writing output to a file named 'dump'
+bool PrintHexDumpToFile(const unsigned char* buffer, SIZE_T size, uintptr_t baseAddress, const std::string& filename = "dump") {
+    std::ofstream outFile(filename, std::ios::out | std::ios::binary);
+    if (!outFile.is_open()) {
+        std::cerr << "[-] Failed to open file '" << filename << "' for writing.\n";
+        return false;
+    }
+
+    for (SIZE_T i = 0; i < size; i += 16) {
+        outFile << "  0x" << std::hex << std::setw(8) << std::setfill('0') << (baseAddress + i) << ": ";
+        
+        // Print hex bytes
+        for (SIZE_T j = 0; j < 16; j++) {
+            if (i + j < size) {
+                outFile << std::hex << std::setw(2) << std::setfill('0') << (int)buffer[i + j] << " ";
+            } else {
+                outFile << "   ";
+            }
+        }
+
+        outFile << " | ";
+
+        // Print ASCII characters
+        for (SIZE_T j = 0; j < 16 && i + j < size; j++) {
+            unsigned char c = buffer[i + j];
+            outFile << (char)(std::isprint(c) ? c : '.');
+        }
+        outFile << std::dec << "\n";
+    }
+
+    outFile.close();
+    return true;
+}
+
 int main(int argc, char* argv[]) {
     if (argc < 2) {
         std::cout << "[!] Usage: " << argv[0] << " <Target PID>\n";
@@ -122,6 +203,20 @@ int main(int argc, char* argv[]) {
     LPVOID targetAddress = (LPVOID)0x4000;
     if (argc >= 3) {
         targetAddress = (LPVOID)std::strtoull(argv[2], nullptr, 0);
+    }
+
+    // Default range: 0x4000 to 0x4100 (256 bytes)
+    uintptr_t startAddress = 0x4000;
+    uintptr_t finishAddress = 0x4100;
+
+    if (argc >= 4) {
+        startAddress = std::strtoull(argv[2], nullptr, 0);
+        finishAddress = std::strtoull(argv[3], nullptr, 0);
+    }
+
+    if (finishAddress <= startAddress) {
+        std::cerr << "[-] Error: Finish address must be greater than start address.\n";
+        return 1;
     }
 
     HANDLE hProcess = SafeOpenProcessRead(targetPid);
@@ -143,6 +238,26 @@ int main(int argc, char* argv[]) {
         } else {
             std::cerr << "[-] Failed to read memory from " << targetAddress << " (address might be unmapped or inaccessible).\n";
         }
+
+        std::cout << "[+] Process opened successfully. Reading range 0x" 
+                  << std::hex << startAddress << " to 0x" << finishAddress << std::dec << "...\n";
+
+        //\ read specified memory range and output to file
+        SIZE_T rangeSize = finishAddress - startAddress;
+        unsigned char* memoryBuffer = new unsigned char[rangeSize]();
+        bytesRead = 0;
+
+        if (ReadMemoryRangeNative(hProcess, startAddress, finishAddress, memoryBuffer, rangeSize, &bytesRead)) {
+            std::cout << "[+] Successfully read " << bytesRead << " bytes.\n";
+            
+            if (PrintHexDumpToFile(memoryBuffer, bytesRead, startAddress, "dump")) {
+                std::cout << "[+] Hex dump successfully written to file 'dump'.\n";
+            }
+        } else {
+            std::cerr << "[-] Failed to read memory range.\n";
+        }
+
+        delete[] memoryBuffer;
 
         // Clean up the handle using NtClose from ntdll (avoiding kernel32 CloseHandle)
         HMODULE hNtdll = GetNtdllHandle();
