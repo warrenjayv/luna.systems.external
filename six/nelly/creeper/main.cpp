@@ -15,6 +15,14 @@ typedef NTSTATUS(NTAPI* pfnNtClose)(
     HANDLE Handle
 );
 
+typedef NTSTATUS(NTAPI* pfnNtReadVirtualMemory)(
+    HANDLE ProcessHandle,
+    PVOID BaseAddress,
+    PVOID Buffer,
+    SIZE_T BufferSize,
+    PSIZE_T NumberOfBytesRead
+);
+
 // Helper to manually find functions in ntdll.dll export table without kernel32
 LPVOID FindExport(HMODULE hModule, const char* lpFunctionName) {
     PIMAGE_DOS_HEADER pDosHeader = (PIMAGE_DOS_HEADER)hModule;
@@ -82,6 +90,25 @@ HANDLE SafeOpenProcessRead(DWORD processId) {
     return NULL;
 }
 
+// New function to read virtual memory using NtReadVirtualMemory
+bool ReadProcessMemoryNative(HANDLE hProcess, LPVOID baseAddress, LPVOID buffer, SIZE_T size, SIZE_T* bytesReadOut = nullptr) {
+    HMODULE hNtdll = GetNtdllHandle();
+    if (!hNtdll) return false;
+
+    pfnNtReadVirtualMemory NtReadVirtualMemory = (pfnNtReadVirtualMemory)FindExport(hNtdll, "NtReadVirtualMemory");
+    if (!NtReadVirtualMemory) return false;
+
+    SIZE_T bytesRead = 0;
+    NTSTATUS status = NtReadVirtualMemory(hProcess, baseAddress, buffer, size, &bytesRead);
+    
+    if (bytesReadOut) {
+        *bytesReadOut = bytesRead;
+    }
+
+    // NT_SUCCESS check (status >= 0) and ensure we read some data
+    return (status >= 0);
+}
+
 int main(int argc, char* argv[]) {
     if (argc < 2) {
         std::cout << "[!] Usage: " << argv[0] << " <Target PID>\n";
@@ -91,9 +118,31 @@ int main(int argc, char* argv[]) {
     DWORD targetPid = static_cast<DWORD>(std::stoul(argv[1]));
     std::cout << "[*] Attempting to safely open PID " << targetPid << " for reading...\n";
 
+    // Set default target address to 0x4000, or allow custom user input via argv[2]
+    LPVOID targetAddress = (LPVOID)0x4000;
+    if (argc >= 3) {
+        targetAddress = (LPVOID)std::strtoull(argv[2], nullptr, 0);
+    }
+
     HANDLE hProcess = SafeOpenProcessRead(targetPid);
     if (hProcess) {
         std::cout << "[+] Successfully opened process! Handle value: " << hProcess << "\n";
+
+        // Attempt to read memory from the specified address
+        const SIZE_T readSize = 16;
+        unsigned char buffer[readSize] = { 0 };
+        SIZE_T bytesRead = 0;
+
+        std::cout << "[*] Reading " << readSize << " bytes from address " << targetAddress << "...\n";
+        if (ReadProcessMemoryNative(hProcess, targetAddress, buffer, readSize, &bytesRead)) {
+            std::cout << "[+] Successfully read " << bytesRead << " bytes:\n    ";
+            for (SIZE_T i = 0; i < bytesRead; i++) {
+                std::printf("%02X ", buffer[i]);
+            }
+            std::printf("\n");
+        } else {
+            std::cerr << "[-] Failed to read memory from " << targetAddress << " (address might be unmapped or inaccessible).\n";
+        }
 
         // Clean up the handle using NtClose from ntdll (avoiding kernel32 CloseHandle)
         HMODULE hNtdll = GetNtdllHandle();
