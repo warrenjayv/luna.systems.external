@@ -11,22 +11,22 @@ OBJS = main.o sources/command.o sources/process.o sources/network.o
 all: $(TARGET)
 
 $(TARGET): $(OBJS)
-	$(CXX) $(OBJS) -o $(TARGET) $(LDFLAGS)
+	$(CXX) $(OBJS) -o $(TARGET) $(LDFLAGS) 2> error
 
 main.o: main.cpp sources/command.h
-	$(CXX) $(CXXFLAGS) -c main.cpp
+	$(CXX) $(CXXFLAGS) -c main.cpp 2> error
 
 sources/command.o: sources/command.cpp sources/command.h sources/process.h sources/network.h
-	$(CXX) $(CXXFLAGS) -c sources/command.cpp -o sources/command.o
+	$(CXX) $(CXXFLAGS) -c sources/command.cpp -o sources/command.o 2> error
 
 sources/process.o: sources/process.cpp sources/process.h
-	$(CXX) $(CXXFLAGS) -c sources/process.cpp -o sources/process.o
+	$(CXX) $(CXXFLAGS) -c sources/process.cpp -o sources/process.o 2> error
 
 sources/network.o: sources/network.cpp sources/network.h
-	$(CXX) $(CXXFLAGS) -c sources/network.cpp -o sources/network.o
+	$(CXX) $(CXXFLAGS) -c sources/network.cpp -o sources/network.o 2> error
 
-# Clean up built files and objects
+# Clean up built files, objects, dump, and error logs
 clean:
-	rm -f *.o sources/*.o $(TARGET) dump
+	rm -f *.o sources/*.o $(TARGET) dump error
 
 .PHONY: all clean

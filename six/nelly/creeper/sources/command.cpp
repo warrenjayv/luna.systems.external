@@ -8,7 +8,8 @@
 
 void CommandHandler::PrintUsage(const char* /*programName*/) {
     std::cout << "\n[+] Available Interactive Commands:\n"
-              << "    getbase                                           - Get remote process base address\n"
+              << "    getbase                                          - Get remote process base address\n"
+              << "    modules                                          - List all loaded modules and base addresses\n" // <-- Added
               << "    readaddr <HexAddress> [Size]                     - Read specific memory address\n"
               << "    readmem <StartHex> <FinishHex> [IP] [Port]       - Read memory range and dump\n"
               << "    pid <NewPID>                                     - Switch to a different target PID\n"
@@ -142,6 +143,9 @@ int CommandHandler::StartInteractiveShell(DWORD targetPid) {
                 std::cerr << "[-] Memory range read failed.\n";
             }
             delete[] memoryBuffer;
+        }
+        else if (cmd == "modules") {
+            ProcessHelper::PrintProcessModules(hProcess);
         }
         else {
             std::cout << "[-] Unknown command: " << cmd << ". Type 'help' for options.\n";

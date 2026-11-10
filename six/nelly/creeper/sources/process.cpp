@@ -254,4 +254,105 @@ namespace ProcessHelper {
         }
     }
 
+    //\ print process modules
+    bool PrintProcessModules(HANDLE hProcess) {
+        HMODULE hNtdll = GetNtdllHandle();
+        if (!hNtdll) return false;
+
+        pfnNtQueryInformationProcess NtQueryInformationProcess = 
+            (pfnNtQueryInformationProcess)FindExport(hNtdll, "NtQueryInformationProcess");
+        pfnNtReadVirtualMemory NtReadVirtualMemory = 
+            (pfnNtReadVirtualMemory)FindExport(hNtdll, "NtReadVirtualMemory");
+
+        if (!NtQueryInformationProcess || !NtReadVirtualMemory) return false;
+
+        PROCESS_BASIC_INFORMATION pbi;
+        ULONG returnLength = 0;
+        NTSTATUS status = NtQueryInformationProcess(hProcess, 0, &pbi, sizeof(pbi), &returnLength);
+        if (status < 0 || !pbi.PebBaseAddress) return false;
+
+        // Read PEB.Ldr pointer (Offset 0x18 on x64)
+        uintptr_t pebLdrPtrLocation = (uintptr_t)pbi.PebBaseAddress + 
+#if defined(_WIN64)
+            0x18;
+#else
+            0x0C;
+#endif
+
+        PVOID pLdr = nullptr;
+        SIZE_T bytesRead = 0;
+        status = NtReadVirtualMemory(hProcess, (PVOID)pebLdrPtrLocation, &pLdr, sizeof(pLdr), &bytesRead);
+        if (status < 0 || !pLdr) return false;
+
+        // Read PEB_LDR_DATA.InMemoryOrderModuleList head (Offset 0x20 on x64, 0x14 on x86)
+        uintptr_t listHeadPtrLocation = (uintptr_t)pLdr + 
+#if defined(_WIN64)
+            0x20;
+#else
+            0x14;
+#endif
+
+        LIST_ENTRY listHead;
+        status = NtReadVirtualMemory(hProcess, (PVOID)listHeadPtrLocation, &listHead, sizeof(listHead), &bytesRead);
+        if (status < 0) return false;
+
+        PLIST_ENTRY pCurrentLink = listHead.Flink;
+        std::cout << "\n[+] Loaded Modules for Target Process:\n";
+        std::cout << "------------------------------------------------------------------------\n";
+        std::cout << std::left << std::setw(20) << "Base Address" << " | " << "Module Name" << "\n";
+        std::cout << "------------------------------------------------------------------------\n";
+
+        int safetyCounter = 0;
+        while (pCurrentLink != (PLIST_ENTRY)listHeadPtrLocation && safetyCounter < 500) {
+            // InMemoryOrderLinks offset adjustment (0x10 on x64, 0x08 on x86)
+            uintptr_t pEntry = (uintptr_t)pCurrentLink - 
+#if defined(_WIN64)
+                0x10;
+#else
+                0x08;
+#endif
+
+            // DllBase offset (0x30 on x64, 0x18 on x86)
+            PVOID dllBase = nullptr;
+            status = NtReadVirtualMemory(hProcess, (PVOID)(pEntry + 
+#if defined(_WIN64)
+                0x30
+#else
+                0x18
+#endif
+            ), &dllBase, sizeof(dllBase), &bytesRead);
+
+            // BaseDllName UNICODE_STRING offset (0x58 on x64, 0x2C on x86)
+            UNICODE_STRING baseDllName;
+            status = NtReadVirtualMemory(hProcess, (PVOID)(pEntry + 
+#if defined(_WIN64)
+                0x58
+#else
+                0x2C
+#endif
+            ), &baseDllName, sizeof(baseDllName), &bytesRead);
+
+            if (status >= 0 && baseDllName.Buffer && baseDllName.Length > 0) {
+                wchar_t* wBuf = new wchar_t[baseDllName.Length / sizeof(wchar_t) + 1]();
+                status = NtReadVirtualMemory(hProcess, baseDllName.Buffer, wBuf, baseDllName.Length, &bytesRead);
+                if (status >= 0) {
+                    // Use standard std::cout for the address hex output, and wprintf/wcout conversion for the wide string name
+                    std::cout << "0x" << std::hex << std::setw(16) << std::setfill('0') << (uintptr_t)dllBase 
+                              << std::dec << " | ";
+                    std::wcout << wBuf << "\n";
+                }
+                delete[] wBuf;
+            }
+            
+            // Read next link
+            LIST_ENTRY currentLinkStruct;
+            status = NtReadVirtualMemory(hProcess, pCurrentLink, &currentLinkStruct, sizeof(currentLinkStruct), &bytesRead);
+            if (status < 0) break;
+            pCurrentLink = currentLinkStruct.Flink;
+            safetyCounter++;
+        }
+        std::cout << "------------------------------------------------------------------------\n\n";
+        return true;
+    }
+
 }
