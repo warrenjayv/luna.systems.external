@@ -147,6 +147,9 @@ int CommandHandler::StartInteractiveShell(DWORD targetPid) {
         else if (cmd == "modules") {
             ProcessHelper::PrintProcessModules(hProcess);
         }
+        else if (cmd == "heaps") {
+            ProcessHelper::PrintProcessHeaps(hProcess);
+        }
         else {
             std::cout << "[-] Unknown command: " << cmd << ". Type 'help' for options.\n";
         }

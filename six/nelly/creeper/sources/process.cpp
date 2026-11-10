@@ -343,7 +343,7 @@ namespace ProcessHelper {
                 }
                 delete[] wBuf;
             }
-            
+
             // Read next link
             LIST_ENTRY currentLinkStruct;
             status = NtReadVirtualMemory(hProcess, pCurrentLink, &currentLinkStruct, sizeof(currentLinkStruct), &bytesRead);
@@ -355,4 +355,64 @@ namespace ProcessHelper {
         return true;
     }
 
-}
+    bool PrintProcessHeaps(HANDLE hProcess) {
+        HMODULE hNtdll = GetNtdllHandle();
+        if (!hNtdll) return false;
+
+        pfnNtQueryInformationProcess NtQueryInformationProcess = 
+            (pfnNtQueryInformationProcess)FindExport(hNtdll, "NtQueryInformationProcess");
+        pfnNtReadVirtualMemory NtReadVirtualMemory = 
+            (pfnNtReadVirtualMemory)FindExport(hNtdll, "NtReadVirtualMemory");
+
+        if (!NtQueryInformationProcess || !NtReadVirtualMemory) return false;
+
+        PROCESS_BASIC_INFORMATION pbi;
+        ULONG returnLength = 0;
+        NTSTATUS status = NtQueryInformationProcess(hProcess, 0, &pbi, sizeof(pbi), &returnLength);
+        if (status < 0 || !pbi.PebBaseAddress) return false;
+
+        // Offsets in PEB for ProcessHeaps and NumberOfHeaps
+#if defined(_WIN64)
+        uintptr_t numHeapsOffset = 0x128;
+        uintptr_t processHeapsOffset = 0x130;
+#else
+        uintptr_t numHeapsOffset = 0x88;
+        uintptr_t processHeapsOffset = 0x90;
+#endif
+
+        ULONG numberOfHeaps = 0;
+        SIZE_T bytesRead = 0;
+
+        // Read NumberOfHeaps
+        status = NtReadVirtualMemory(hProcess, (PVOID)((uintptr_t)pbi.PebBaseAddress + numHeapsOffset), &numberOfHeaps, sizeof(numberOfHeaps), &bytesRead);
+        if (status < 0 || numberOfHeaps == 0) return false;
+
+        // Read ProcessHeaps pointer array
+        PVOID* processHeapsArray = nullptr;
+        status = NtReadVirtualMemory(hProcess, (PVOID)((uintptr_t)pbi.PebBaseAddress + processHeapsOffset), &processHeapsArray, sizeof(processHeapsArray), &bytesRead);
+        if (status < 0 || !processHeapsArray) return false;
+
+        // Allocate local buffer to hold the heap handles array
+        PVOID* localHeaps = new PVOID[numberOfHeaps];
+        status = NtReadVirtualMemory(hProcess, processHeapsArray, localHeaps, numberOfHeaps * sizeof(PVOID), &bytesRead);
+        if (status < 0) {
+            delete[] localHeaps;
+            return false;
+        }
+
+        std::cout << "\n[+] Initialized Heaps for Target Process (Total: " << numberOfHeaps << "):\n";
+        std::cout << "--------------------------------------------------------\n";
+        std::cout << std::left << std::setw(20) << "Heap Handle" << " | " << "Index" << "\n";
+        std::cout << "--------------------------------------------------------\n";
+
+        for (ULONG i = 0; i < numberOfHeaps; i++) {
+            std::cout << "0x" << std::hex << std::setw(16) << std::setfill('0') << (uintptr_t)localHeaps[i] 
+                      << std::dec << " | Heap #" << i << "\n";
+        }
+        std::cout << "--------------------------------------------------------\n\n";
+
+        delete[] localHeaps;
+        return true;
+    } //\ PrintProcessHeaps
+
+} //\ ProcessHelper
