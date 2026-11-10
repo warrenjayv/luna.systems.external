@@ -1,25 +1,27 @@
-# Compiler and flags
 CXX = g++
 CXXFLAGS = -std=c++17 -Wall -Wextra -O2
 LDFLAGS = -lws2_32
 
-# Target executable name and object files
 TARGET = nelly.exe
-OBJS = main.o network.o
+OBJS = main.o command.o process.o network.o
 
-# Default build rule
 all: $(TARGET)
 
 $(TARGET): $(OBJS)
 	$(CXX) $(OBJS) -o $(TARGET) $(LDFLAGS)
 
-main.o: main.cpp network.h
+main.o: main.cpp command.h
 	$(CXX) $(CXXFLAGS) -c main.cpp
+
+command.o: command.cpp command.h process.h network.h
+	$(CXX) $(CXXFLAGS) -c command.cpp
+
+process.o: process.cpp process.h
+	$(CXX) $(CXXFLAGS) -c process.cpp
 
 network.o: network.cpp network.h
 	$(CXX) $(CXXFLAGS) -c network.cpp
 
-# Clean up built files
 clean:
 	rm -f *.o $(TARGET) dump
 
