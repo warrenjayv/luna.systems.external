@@ -1,0 +1,9 @@
+# Vim script files
+*.vim
+
+# Vim swap/backup/temp files (recommended)
+*.swp
+*.swo
+*~
+Session.vim
+*.un~
