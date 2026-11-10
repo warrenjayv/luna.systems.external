@@ -1,6 +1,7 @@
-#include "command.h"
 #include <iostream>
 #include <cstdlib>
+
+#include "sources/command.h"
 
 int main(int argc, char* argv[]) {
     if (argc < 2) {

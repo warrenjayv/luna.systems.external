@@ -1,28 +1,32 @@
+# Compiler and flags
 CXX = g++
-CXXFLAGS = -std=c++17 -Wall -Wextra -O2
+CXXFLAGS = -std=c++17 -Wall -Wextra -O2 -Isources
 LDFLAGS = -lws2_32
 
+# Target executable name and object paths
 TARGET = nelly.exe
-OBJS = main.o command.o process.o network.o
+OBJS = main.o sources/command.o sources/process.o sources/network.o
 
+# Default build rule
 all: $(TARGET)
 
 $(TARGET): $(OBJS)
 	$(CXX) $(OBJS) -o $(TARGET) $(LDFLAGS)
 
-main.o: main.cpp command.h
+main.o: main.cpp sources/command.h
 	$(CXX) $(CXXFLAGS) -c main.cpp
 
-command.o: command.cpp command.h process.h network.h
-	$(CXX) $(CXXFLAGS) -c command.cpp
+sources/command.o: sources/command.cpp sources/command.h sources/process.h sources/network.h
+	$(CXX) $(CXXFLAGS) -c sources/command.cpp -o sources/command.o
 
-process.o: process.cpp process.h
-	$(CXX) $(CXXFLAGS) -c process.cpp
+sources/process.o: sources/process.cpp sources/process.h
+	$(CXX) $(CXXFLAGS) -c sources/process.cpp -o sources/process.o
 
-network.o: network.cpp network.h
-	$(CXX) $(CXXFLAGS) -c network.cpp
+sources/network.o: sources/network.cpp sources/network.h
+	$(CXX) $(CXXFLAGS) -c sources/network.cpp -o sources/network.o
 
+# Clean up built files and objects
 clean:
-	rm -f *.o $(TARGET) dump
+	rm -f *.o sources/*.o $(TARGET) dump
 
 .PHONY: all clean
