@@ -25,6 +25,14 @@ typedef NTSTATUS(NTAPI* pfnNtReadVirtualMemory)(
     PSIZE_T NumberOfBytesRead
 );
 
+typedef NTSTATUS(NTAPI* pfnNtQueryInformationProcess)(
+    HANDLE ProcessHandle,
+    ULONG ProcessInformationClass,
+    PVOID ProcessInformation,
+    ULONG ProcessInformationLength,
+    PULONG ReturnLength
+);
+
 // Helper to manually find functions in ntdll.dll export table without kernel32
 LPVOID FindExport(HMODULE hModule, const char* lpFunctionName) {
     PIMAGE_DOS_HEADER pDosHeader = (PIMAGE_DOS_HEADER)hModule;
@@ -156,6 +164,54 @@ bool ReadProcessMemoryNative(HANDLE hProcess, LPVOID baseAddress, LPVOID buffer,
     return (status >= 0);
 }
 
+// Native function to retrieve the target process base address via PEB
+uintptr_t GetProcessBaseAddress(HANDLE hProcess) {
+    HMODULE hNtdll = GetNtdllHandle();
+    if (!hNtdll) return 0;
+
+    pfnNtQueryInformationProcess NtQueryInformationProcess = 
+        (pfnNtQueryInformationProcess)FindExport(hNtdll, "NtQueryInformationProcess");
+    pfnNtReadVirtualMemory NtReadVirtualMemory = 
+        (pfnNtReadVirtualMemory)FindExport(hNtdll, "NtReadVirtualMemory");
+
+    if (!NtQueryInformationProcess || !NtReadVirtualMemory) return 0;
+
+    PROCESS_BASIC_INFORMATION pbi;
+    ULONG returnLength = 0;
+
+    // Query remote PEB address (ProcessBasicInformation = 0)
+    NTSTATUS status = NtQueryInformationProcess(
+        hProcess, 
+        0, 
+        &pbi, 
+        sizeof(pbi), 
+        &returnLength
+    );
+
+    if (status < 0 || !pbi.PebBaseAddress) {
+        return 0;
+    }
+
+    // ImageBaseAddress is located inside the PEB struct:
+    // Offset is 0x10 for 64-bit, and 0x8 for 32-bit.
+    uintptr_t imageBasePtrLocation = (uintptr_t)pbi.PebBaseAddress + 
+    #if defined(_WIN64)
+        0x10;
+    #else
+        0x8;
+    #endif
+
+    uintptr_t imageBaseAddress = 0;
+    SIZE_T bytesRead = 0;
+    status = NtReadVirtualMemory(hProcess, (PVOID)imageBasePtrLocation, &imageBaseAddress, sizeof(imageBaseAddress), &bytesRead);
+
+    if (status >= 0 && bytesRead == sizeof(imageBaseAddress)) {
+        return imageBaseAddress;
+    }
+
+    return 0;
+}
+
 // Updated Hex Dump function writing output to a file named 'dump'
 bool PrintHexDumpToFile(const unsigned char* buffer, SIZE_T size, uintptr_t baseAddress, const std::string& filename = "dump") {
     std::ofstream outFile(filename, std::ios::out | std::ios::binary);
@@ -222,6 +278,14 @@ int main(int argc, char* argv[]) {
     HANDLE hProcess = SafeOpenProcessRead(targetPid);
     if (hProcess) {
         std::cout << "[+] Successfully opened process! Handle value: " << hProcess << "\n";
+
+        // Obtain process base address natively
+        uintptr_t baseAddress = GetProcessBaseAddress(hProcess);
+        if (baseAddress) {
+            std::cout << "[+] Discovered Process Base Address: 0x" << std::hex << baseAddress << std::dec << "\n";
+        } else {
+            std::cerr << "[-] Warning: Could not retrieve process base address via PEB.\n";
+        }
 
         // Attempt to read memory from the specified address
         const SIZE_T readSize = 16;
