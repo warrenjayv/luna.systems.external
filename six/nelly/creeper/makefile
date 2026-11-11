@@ -26,9 +26,9 @@ sources/process.o: sources/process.cpp sources/process.h
 sources/network.o: sources/network.cpp sources/network.h
 	@$(CXX) $(CXXFLAGS) -c sources/network.cpp -o sources/network.o 2> error || (printf "\033[31mfail\033[0m\n"; exit 1)
 
-# Clean up built files, objects, dump, and error logs
+# Clean up built files, objects, dump directory, and error logs recursively
 clean:
-	@rm -f *.o sources/*.o $(TARGET) dump error
+	@rm -rf *.o sources/*.o $(TARGET) dump error
 	@printf "\033[32mclean complete\033[0m\n"
 
 .PHONY: all clean

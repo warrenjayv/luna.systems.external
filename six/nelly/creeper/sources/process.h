@@ -9,6 +9,7 @@ namespace ProcessHelper {
     bool PrintProcessModules(HANDLE hProcess); 
     bool PrintProcessHeaps(HANDLE hProcess);
     bool ReadMemoryRange(HANDLE hProcess, uintptr_t startAddress, uintptr_t finishAddress, unsigned char* outBuffer, SIZE_T bufferSize, SIZE_T* totalBytesRead);
+    bool ReadMemoryRangeFloats(HANDLE hProcess, uintptr_t address, int count, const std::string& outFilename = "");
     bool DumpToFile(const unsigned char* buffer, SIZE_T size, uintptr_t baseAddress, const std::string& filename);
     void PrintHexDump(const unsigned char* buffer, SIZE_T size, uintptr_t baseAddress);
     

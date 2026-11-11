@@ -12,6 +12,7 @@ void CommandHandler::PrintUsage(const char* /*programName*/) {
               << "    modules                                          - List all loaded modules and base addresses\n" 
               << "    readaddr <HexAddress> [Size]                     - Read specific memory address\n"
               << "    readmem <StartHex> <FinishHex> [IP] [Port]       - Read memory range and dump\n"
+              << "    readfloat <HexAddress> [Count] [Filename]         - Read and parse memory as floats/doubles and dump\n"
               << "    heaps                                            - List all heaps in the target process\n" 
               << "    pid <NewPID>                                     - Switch to a different target PID\n"
               << "    exit                                             - Close handle and exit session\n\n";
@@ -151,6 +152,21 @@ int CommandHandler::StartInteractiveShell(DWORD targetPid) {
         else if (cmd == "heaps") {
             ProcessHelper::PrintProcessHeaps(hProcess);
         }
+        else if (cmd == "readfloat") {
+            if (args.empty()) {
+                std::cout << "[!] Usage: readfloat <HexAddress> [count] [filename]\n";
+                continue;
+            }
+
+            uintptr_t address = std::strtoull(args[0].c_str(), nullptr, 0);
+            int count = (args.size() >= 2) ? std::stoi(args[1]) : 4;
+            std::string filename = (args.size() >= 3) ? args[2] : "";
+
+            if (!ProcessHelper::ReadMemoryRangeFloats(hProcess, address, count, filename)) {
+                std::cerr << "[-] Failed to read or parse floating-point memory.\n";
+            }
+        }
+        
         else {
             std::cout << "[-] Unknown command: " << cmd << ". Type 'help' for options.\n";
         }

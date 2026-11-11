@@ -3,6 +3,7 @@
 #include <winternl.h>
 #include <iostream>
 #include <fstream>
+#include <filesystem>
 #include <iomanip>
 
 // Function pointer signatures for NT native APIs
@@ -355,26 +356,36 @@ namespace ProcessHelper {
         return true;
     }
 
-    bool PrintProcessHeaps(HANDLE hProcess) {
+bool PrintProcessHeaps(HANDLE hProcess) {
         HMODULE hNtdll = GetNtdllHandle();
-        if (!hNtdll) return false;
+        if (!hNtdll) {
+            std::cerr << "[-] Failed to get handle for ntdll.dll\n";
+            return false;
+        }
 
         pfnNtQueryInformationProcess NtQueryInformationProcess = 
             (pfnNtQueryInformationProcess)FindExport(hNtdll, "NtQueryInformationProcess");
         pfnNtReadVirtualMemory NtReadVirtualMemory = 
             (pfnNtReadVirtualMemory)FindExport(hNtdll, "NtReadVirtualMemory");
 
-        if (!NtQueryInformationProcess || !NtReadVirtualMemory) return false;
+        if (!NtQueryInformationProcess || !NtReadVirtualMemory) {
+            std::cerr << "[-] Failed to resolve NT internal functions from ntdll.\n";
+            return false;
+        }
 
         PROCESS_BASIC_INFORMATION pbi;
         ULONG returnLength = 0;
         NTSTATUS status = NtQueryInformationProcess(hProcess, 0, &pbi, sizeof(pbi), &returnLength);
-        if (status < 0 || !pbi.PebBaseAddress) return false;
+        if (status < 0 || !pbi.PebBaseAddress) {
+            std::cerr << "[-] NtQueryInformationProcess failed or returned null PEB. Status: 0x" 
+                      << std::hex << (unsigned long)status << std::dec << "\n";
+            return false;
+        }
 
-        // Offsets in PEB for ProcessHeaps and NumberOfHeaps
+        // PEB Offsets for x64 Windows (Standard Win10/Win11 layout)
 #if defined(_WIN64)
-        uintptr_t numHeapsOffset = 0x128;
-        uintptr_t processHeapsOffset = 0x130;
+        uintptr_t numHeapsOffset = 0x118;     
+        uintptr_t processHeapsOffset = 0x120; 
 #else
         uintptr_t numHeapsOffset = 0x88;
         uintptr_t processHeapsOffset = 0x90;
@@ -383,19 +394,42 @@ namespace ProcessHelper {
         ULONG numberOfHeaps = 0;
         SIZE_T bytesRead = 0;
 
-        // Read NumberOfHeaps
+        // Read NumberOfHeaps from PEB
         status = NtReadVirtualMemory(hProcess, (PVOID)((uintptr_t)pbi.PebBaseAddress + numHeapsOffset), &numberOfHeaps, sizeof(numberOfHeaps), &bytesRead);
-        if (status < 0 || numberOfHeaps == 0) return false;
+        if (status < 0) {
+            std::cerr << "[-] Failed to read NumberOfHeaps from PEB offset 0x" << std::hex << numHeapsOffset 
+                      << std::dec << ". Status: 0x" << std::hex << (unsigned long)status << std::dec << "\n";
+            return false;
+        }
 
-        // Read ProcessHeaps pointer array
+        if (numberOfHeaps == 0) {
+            std::cout << "[!] NumberOfHeaps reported as 0 in remote PEB.\n";
+            return false;
+        }
+
+        // Read ProcessHeaps pointer array address from PEB
         PVOID* processHeapsArray = nullptr;
         status = NtReadVirtualMemory(hProcess, (PVOID)((uintptr_t)pbi.PebBaseAddress + processHeapsOffset), &processHeapsArray, sizeof(processHeapsArray), &bytesRead);
-        if (status < 0 || !processHeapsArray) return false;
+        if (status < 0 || !processHeapsArray) {
+            std::cerr << "[-] Failed to read ProcessHeaps array pointer from PEB offset 0x" << std::hex << processHeapsOffset 
+                      << std::dec << ". Status: 0x" << std::hex << (unsigned long)status << std::dec << "\n";
+            return false;
+        }
+
+        // SANity Check: Ensure the pointer is in valid user-space range (not garbage)
+        if ((uintptr_t)processHeapsArray < 0x10000 || (uintptr_t)processHeapsArray > 0x00007FFFFFFFFFFF) {
+            std::cerr << "[-] Invalid ProcessHeaps pointer address read from PEB: 0x" 
+                      << std::hex << (uintptr_t)processHeapsArray << std::dec 
+                      << " (Check your PEB offsets 0x" << std::hex << numHeapsOffset << "/" << processHeapsOffset << ")\n";
+            return false;
+        }
 
         // Allocate local buffer to hold the heap handles array
         PVOID* localHeaps = new PVOID[numberOfHeaps];
         status = NtReadVirtualMemory(hProcess, processHeapsArray, localHeaps, numberOfHeaps * sizeof(PVOID), &bytesRead);
         if (status < 0) {
+            std::cerr << "[-] Failed to read remote process heap handles array content. Status: 0x" 
+                      << std::hex << (unsigned long)status << std::dec << "\n";
             delete[] localHeaps;
             return false;
         }
@@ -413,6 +447,67 @@ namespace ProcessHelper {
 
         delete[] localHeaps;
         return true;
-    } //\ PrintProcessHeaps
+    } // PrintProcessHeaps
+
+bool ReadMemoryRangeFloats(HANDLE hProcess, uintptr_t address, int count, const std::string& outFilename) {
+        // Keep your 32-byte (0x20) stride block layout
+        SIZE_T stride = 32; 
+        SIZE_T bytesToRead = count * stride;
+        unsigned char* buffer = new unsigned char[bytesToRead]();
+        SIZE_T bytesRead = 0;
+
+        std::cout << "[*] Reading " << count << " float values (" << stride << " bytes apart) from 0x" << std::hex << address << std::dec << "...\n";
+        
+        if (!ReadMemoryRange(hProcess, address, address + bytesToRead, buffer, bytesToRead, &bytesRead)) {
+            std::cerr << "[-] Failed to read memory for floating-point conversion.\n";
+            delete[] buffer;
+            return false;
+        }
+
+        std::ostringstream oss;
+        oss << "[+] 32-bit Float Interpretations (Base Address: 0x" << std::hex << address << std::dec << "):\n";
+        oss << "--------------------------------------------------\n";
+        oss << std::left << std::setw(18) << "Address" 
+            << " | " << std::setw(15) << "Float (32-bit)" << "\n";
+        oss << "--------------------------------------------------\n";
+
+        for (int i = 0; i < count; i++) {
+            uintptr_t currentAddr = address + (i * stride);
+            size_t offset = i * stride;
+
+            if (offset + sizeof(float) <= bytesRead) {
+                float fVal = *reinterpret_cast<float*>(buffer + offset);
+
+                oss << "  0x" << std::hex << std::setw(12) << std::setfill('0') << currentAddr << std::dec << " | "
+                    << std::setw(15) << std::fixed << std::setprecision(4) << fVal << "\n";
+            }
+        }
+        oss << "--------------------------------------------------\n";
+
+        std::cout << oss.str() << "\n";
+
+        std::string targetFile = outFilename;
+        if (targetFile.empty()) {
+            std::ostringstream nameBuilder;
+            nameBuilder << "dump/floats_0x" << std::hex << address << ".txt";
+            targetFile = nameBuilder.str();
+        } else {
+            targetFile = "dump/" + targetFile;
+        }
+
+        std::filesystem::create_directories("dump");
+
+        std::ofstream outFile(targetFile, std::ios::out);
+        if (outFile.is_open()) {
+            outFile << oss.str();
+            outFile.close();
+            std::cout << "[+] Successfully saved float dump to " << targetFile << "\n\n";
+        } else {
+            std::cerr << "[-] Warning: Failed to write dump file to '" << targetFile << "'.\n\n";
+        }
+
+        delete[] buffer;
+        return true;
+    } //\ readMemoryRangeFloats
 
 } //\ ProcessHelper
