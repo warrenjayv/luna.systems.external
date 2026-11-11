@@ -12,5 +12,7 @@ namespace ProcessHelper {
     bool ReadMemoryRangeFloats(HANDLE hProcess, uintptr_t address, int count, const std::string& outFilename = "");
     bool DumpToFile(const unsigned char* buffer, SIZE_T size, uintptr_t baseAddress, const std::string& filename);
     void PrintHexDump(const unsigned char* buffer, SIZE_T size, uintptr_t baseAddress);
-    
+    DWORD GetFirstThreadId(DWORD processId);
+    bool StartMonitorPty(HANDLE hProcess, DWORD processId, int ptyNum);
+    void StopMonitor();
 }

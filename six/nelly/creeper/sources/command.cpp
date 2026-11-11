@@ -12,8 +12,10 @@ void CommandHandler::PrintUsage(const char* /*programName*/) {
               << "    modules                                          - List all loaded modules and base addresses\n" 
               << "    readaddr <HexAddress> [Size]                     - Read specific memory address\n"
               << "    readmem <StartHex> <FinishHex> [IP] [Port]       - Read memory range and dump\n"
-              << "    readfloat <HexAddress> [Count] [Filename]         - Read and parse memory as floats/doubles and dump\n"
+              << "    readfloat <HexAddress> [Count] [Filename]        - Read and parse memory as floats/doubles and dump\n"
               << "    heaps                                            - List all heaps in the target process\n" 
+              << "    monitor pty<n>                                   - Stream floating registers live to PTY target (e.g. monitor pty1)\n"
+              << "    stopmonitor                                      - Stop the floating register monitor\n"
               << "    pid <NewPID>                                     - Switch to a different target PID\n"
               << "    exit                                             - Close handle and exit session\n\n";
 }
@@ -166,7 +168,28 @@ int CommandHandler::StartInteractiveShell(DWORD targetPid) {
                 std::cerr << "[-] Failed to read or parse floating-point memory.\n";
             }
         }
-        
+        else if (cmd == "monitor") {
+            if (args.empty()) {
+                std::cout << "[!] Usage: monitor pty<n> (e.g., monitor pty1)\n";
+                continue;
+            }
+
+            std::string ptyArg = args[0];
+            if (ptyArg.rfind("pty", 0) == 0) {
+                try {
+                    int ptyNum = std::stoi(ptyArg.substr(3));
+                    // Start the background PTY register monitor
+                    ProcessHelper::StartMonitorPty(hProcess, targetPid, ptyNum);
+                } catch (...) {
+                    std::cerr << "[-] Invalid PTY format. Use 'monitor pty1', 'monitor pty2', etc.\n";
+                }
+            } else {
+                std::cout << "[!] Unknown monitor target. Usage: monitor pty<n>\n";
+            }
+        }
+        else if (cmd == "stopmonitor") {
+            ProcessHelper::StopMonitor();
+        }
         else {
             std::cout << "[-] Unknown command: " << cmd << ". Type 'help' for options.\n";
         }

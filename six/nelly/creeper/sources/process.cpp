@@ -6,6 +6,13 @@
 #include <filesystem>
 #include <iomanip>
 
+#include <thread>
+#include <atomic>
+#include <chrono>
+#include <tlhelp32.h>
+#include <windows.h>
+#include <cstring>
+
 // Function pointer signatures for NT native APIs
 typedef NTSTATUS(NTAPI* pfnNtOpenProcess)(
     PHANDLE ProcessHandle,
@@ -34,7 +41,115 @@ typedef NTSTATUS(NTAPI* pfnNtQueryInformationProcess)(
     PULONG ReturnLength
 );
 
+// Global control flags for the background monitor worker
+static std::atomic<bool> g_isMonitoring(false);
+static std::thread g_monitorThread;
+
 namespace ProcessHelper {
+
+// Helper to locate the first active thread ID for a target process
+    DWORD GetFirstThreadId(DWORD processId) {
+        HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+        if (hSnapshot == INVALID_HANDLE_VALUE) return 0;
+
+        THREADENTRY32 te;
+        te.dwSize = sizeof(THREADENTRY32);
+        DWORD targetThreadId = 0;
+
+        if (Thread32First(hSnapshot, &te)) {
+            do {
+                if (te.th32OwnerProcessID == processId) {
+                    targetThreadId = te.th32ThreadID;
+                    break;
+                }
+            } while (Thread32Next(hSnapshot, &te));
+        }
+        CloseHandle(hSnapshot);
+        return targetThreadId;
+    }
+
+    // Generic Background Worker for Register/State Monitoring
+    void GenericMonitorWorker(DWORD processId, int ptyNum) {
+        std::string ptyPath = "/dev/pts/" + std::to_string(ptyNum);
+        std::ofstream ptyStream(ptyPath, std::ios::out);
+        
+        if (!ptyStream.is_open()) {
+            std::cerr << "\n[-] Failed to open PTY target: " << ptyPath 
+                      << " (Ensure the target terminal window is open and writable)\n";
+            g_isMonitoring = false;
+            return;
+        }
+
+        ptyStream << "[*] Floating Registers Monitor active for PID " << processId 
+                  << " -> Streaming to PTY " << ptyNum << "\n" << std::flush;
+
+        DWORD threadId = GetFirstThreadId(processId);
+        if (!threadId) {
+            ptyStream << "[-] Error: No active threads found for PID " << processId << "\n";
+            g_isMonitoring = false;
+            return;
+        }
+
+        while (g_isMonitoring) {
+            HANDLE hThread = OpenThread(THREAD_GET_CONTEXT | THREAD_SUSPEND_RESUME, FALSE, threadId);
+            if (hThread) {
+                SuspendThread(hThread);
+
+                CONTEXT ctx;
+                std::memset(&ctx, 0, sizeof(CONTEXT));
+                // CONTEXT_FLOATING_POINT includes the FPU state and XMM0-XMM15 on x64 Windows
+                ctx.ContextFlags = CONTEXT_FLOATING_POINT;
+                
+                if (GetThreadContext(hThread, &ctx)) {
+                    // Print header and XMM0 - XMM3 states cleanly on the same line using \r
+                    ptyStream << "\r[PTY" << ptyNum << " | PID:" << processId << "] ";
+                    
+                    for (int i = 0; i < 4; i++) {
+                        ULONGLONG lowVal = ctx.VectorRegister[i].Low;
+                        ULONGLONG highVal = ctx.VectorRegister[i].High;
+                        ptyStream << "XMM" << i << ":[0x" << std::hex << std::setfill('0') 
+                                  << std::setw(16) << highVal << std::setw(16) << lowVal << std::dec << "] ";
+                    }
+                    ptyStream << std::flush;
+                }
+
+                ResumeThread(hThread);
+                CloseHandle(hThread);
+            }
+
+            // ~4 FPS refresh rate to avoid choking the terminal output buffer
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        }
+
+        ptyStream << "\n[+] Floating register monitor on PTY " << ptyNum << " stopped.\n";
+        ptyStream.close();
+    }
+
+    bool StartMonitorPty(HANDLE hProcess, DWORD processId, int ptyNum) {
+        if (g_isMonitoring) {
+            std::cout << "[-] A monitor task is already active. Type 'stop' first.\n";
+            return false;
+        }
+
+        g_isMonitoring = true;
+        // Launch background worker dedicated to floating registers
+        g_monitorThread = std::thread(GenericMonitorWorker, processId, ptyNum);
+        std::cout << "[+] Floating register monitor started on pty" << ptyNum << ". Type 'stop' to halt.\n";
+        return true;
+    }
+
+    void StopMonitor() {
+        if (!g_isMonitoring) {
+            std::cout << "[-] No active monitor running.\n";
+            return;
+        }
+
+        g_isMonitoring = false;
+        if (g_monitorThread.joinable()) {
+            g_monitorThread.join(); // Safely join the background thread back to main
+        }
+        std::cout << "\n[+] Monitor successfully stopped.\n";
+    } // StopMonitor
 
     // Helper to manually find functions in ntdll.dll export table without kernel32
     LPVOID FindExport(HMODULE hModule, const char* lpFunctionName) {
