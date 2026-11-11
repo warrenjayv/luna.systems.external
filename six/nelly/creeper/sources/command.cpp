@@ -9,9 +9,10 @@
 void CommandHandler::PrintUsage(const char* /*programName*/) {
     std::cout << "\n[+] Available Interactive Commands:\n"
               << "    getbase                                          - Get remote process base address\n"
-              << "    modules                                          - List all loaded modules and base addresses\n" // <-- Added
+              << "    modules                                          - List all loaded modules and base addresses\n" 
               << "    readaddr <HexAddress> [Size]                     - Read specific memory address\n"
               << "    readmem <StartHex> <FinishHex> [IP] [Port]       - Read memory range and dump\n"
+              << "    heaps                                            - List all heaps in the target process\n" 
               << "    pid <NewPID>                                     - Switch to a different target PID\n"
               << "    exit                                             - Close handle and exit session\n\n";
 }
