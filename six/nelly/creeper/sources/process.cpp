@@ -450,8 +450,7 @@ bool PrintProcessHeaps(HANDLE hProcess) {
     } // PrintProcessHeaps
 
 bool ReadMemoryRangeFloats(HANDLE hProcess, uintptr_t address, int count, const std::string& outFilename) {
-        // Keep your 32-byte (0x20) stride block layout
-        SIZE_T stride = 32; 
+        SIZE_T stride = 32; // 32 bytes (0x20 hex) per chunk
         SIZE_T bytesToRead = count * stride;
         unsigned char* buffer = new unsigned char[bytesToRead]();
         SIZE_T bytesRead = 0;
@@ -472,14 +471,14 @@ bool ReadMemoryRangeFloats(HANDLE hProcess, uintptr_t address, int count, const 
         oss << "--------------------------------------------------\n";
 
         for (int i = 0; i < count; i++) {
+            // Ensure strict additive stride without any shifting or scaling
             uintptr_t currentAddr = address + (i * stride);
             size_t offset = i * stride;
 
             if (offset + sizeof(float) <= bytesRead) {
                 float fVal = *reinterpret_cast<float*>(buffer + offset);
 
-                oss << "  0x" << std::hex << std::setw(12) << std::setfill('0') << currentAddr << std::dec << " | "
-                    << std::setw(15) << std::fixed << std::setprecision(4) << fVal << "\n";
+                oss << "  0x" << std::hex << currentAddr << std::dec << " | " << std::setw(15) << std::fixed << std::setprecision(4) << fVal << "\n";
             }
         }
         oss << "--------------------------------------------------\n";
@@ -508,6 +507,6 @@ bool ReadMemoryRangeFloats(HANDLE hProcess, uintptr_t address, int count, const 
 
         delete[] buffer;
         return true;
-    } //\ readMemoryRangeFloats
+    } //\ ReadMemoryRangeFloats
 
 } //\ ProcessHelper
