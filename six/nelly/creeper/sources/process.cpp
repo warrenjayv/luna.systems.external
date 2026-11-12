@@ -13,6 +13,10 @@
 #include <windows.h>
 #include <cstring>
 
+#ifndef STATUS_SUCCESS
+#define STATUS_SUCCESS ((NTSTATUS)0x00000000L)
+#endif
+
 // Function pointer signatures for NT native APIs
 typedef NTSTATUS(NTAPI* pfnNtOpenProcess)(
     PHANDLE ProcessHandle,
@@ -39,6 +43,16 @@ typedef NTSTATUS(NTAPI* pfnNtQueryInformationProcess)(
     PVOID ProcessInformation,
     ULONG ProcessInformationLength,
     PULONG ReturnLength
+);
+
+// Typedef for NtQueryVirtualMemory
+typedef NTSTATUS(NTAPI* pfnNtQueryVirtualMemory)(
+    HANDLE ProcessHandle,
+    PVOID BaseAddress,
+    int MemoryInformationClass, // 0 = MemoryBasicInformation
+    PVOID MemoryInformation,
+    SIZE_T MemoryInformationLength,
+    PSIZE_T ReturnLength
 );
 
 // Global control flags for the background monitor worker
@@ -623,5 +637,96 @@ bool ReadMemoryRangeFloats(HANDLE hProcess, uintptr_t address, int count, const 
         delete[] buffer;
         return true;
     } //\ ReadMemoryRangeFloats
+
+    bool PrintProcessMemoryMap(HANDLE hProcess, const std::string& outFilename) {
+        if (!hProcess || hProcess == INVALID_HANDLE_VALUE) {
+            std::cerr << "[-] Invalid process handle passed to PrintProcessMemoryMap.\n";
+            return false;
+        }
+
+        // Resolve NtQueryVirtualMemory dynamically from ntdll.dll
+        HMODULE hNtdll = GetNtdllHandle();
+        auto NtQueryVirtualMemory = reinterpret_cast<pfnNtQueryVirtualMemory>(
+            FindExport(hNtdll, "NtQueryVirtualMemory")
+        );
+
+        if (!NtQueryVirtualMemory) {
+            std::cerr << "[-] Failed to resolve NtQueryVirtualMemory from ntdll.dll.\n";
+            return false;
+        }
+
+        uintptr_t currentAddress = 0;
+        MEMORY_BASIC_INFORMATION mbi;
+
+        std::cout << "\n[+] Generating Memory Map via NtQueryVirtualMemory...\n";
+        std::cout << "------------------------------------------------------------------------------------\n";
+        std::cout << std::left << std::setw(18) << "Base Address" 
+                  << " | " << std::setw(14) << "Region Size" 
+                  << " | " << std::setw(12) << "State" 
+                  << " | " << std::setw(12) << "Protection" 
+                  << " | " << std::setw(10) << "Type" << "\n";
+        std::cout << "------------------------------------------------------------------------------------\n";
+
+        // Traverse the 64-bit user-space address space
+        while (true) {
+            SIZE_T returnLength = 0;
+            NTSTATUS status = NtQueryVirtualMemory(
+                hProcess,
+                reinterpret_cast<PVOID>(currentAddress),
+                0, // MemoryBasicInformation
+                &mbi,
+                sizeof(mbi),
+                &returnLength
+            );
+
+            if (status != STATUS_SUCCESS) {
+                break; // Reached end of address space or failed query
+            }
+
+            // Filter for committed memory regions (active allocations)
+            if (mbi.State == MEM_COMMIT) {
+                std::string stateStr = "Commit";
+                std::string protStr = "";
+                std::string typeStr = "";
+
+                // Decode protection flags (strip modifiers like PAGE_GUARD)
+                DWORD prot = mbi.Protect & 0xFF; 
+                if (prot == PAGE_READONLY) protStr = "READONLY";
+                else if (prot == PAGE_READWRITE) protStr = "READWRITE";
+                else if (prot == PAGE_EXECUTE_READ) protStr = "EXEC_READ";
+                else if (prot == PAGE_EXECUTE_READWRITE) protStr = "EXEC_RW";
+                else if (prot == PAGE_EXECUTE) protStr = "EXECUTE";
+                else protStr = "PROTECT_0x" + std::to_string(prot);
+
+                // Decode allocation type
+                if (mbi.Type == MEM_PRIVATE) typeStr = "Private";
+                else if (mbi.Type == MEM_IMAGE) typeStr = "Image";
+                else if (mbi.Type == MEM_MAPPED) typeStr = "Mapped";
+                else typeStr = "Unknown";
+
+                std::cout << "  0x" << std::hex << std::setw(14) << std::setfill('0') << reinterpret_cast<uintptr_t>(mbi.BaseAddress) << std::dec
+                          << " | " << std::setw(10) << (mbi.RegionSize / 1024) << " KB"
+                          << " | " << std::setw(12) << stateStr
+                          << " | " << std::setw(12) << protStr
+                          << " | " << std::setw(10) << typeStr << "\n";
+            }
+
+            // Calculate next region address safely to prevent overflow
+            uintptr_t nextAddress = reinterpret_cast<uintptr_t>(mbi.BaseAddress) + mbi.RegionSize;
+            if (nextAddress <= currentAddress) {
+                break; 
+            }
+            currentAddress = nextAddress;
+
+            // Stop at user-space / kernel-space boundary on x64 Windows
+            if (currentAddress >= 0x00007FFFFFFFFFFF) {
+                break;
+            }
+        }
+
+        std::cout << "------------------------------------------------------------------------------------\n";
+        std::cout << "[+] Memory map generation completed.\n\n";
+        return true;
+    } //\ PrintProcessMemoryMap
 
 } //\ ProcessHelper
