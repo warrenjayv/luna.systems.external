@@ -658,14 +658,16 @@ bool ReadMemoryRangeFloats(HANDLE hProcess, uintptr_t address, int count, const 
         uintptr_t currentAddress = 0;
         MEMORY_BASIC_INFORMATION mbi;
 
-        std::cout << "\n[+] Generating Memory Map via NtQueryVirtualMemory...\n";
-        std::cout << "------------------------------------------------------------------------------------\n";
-        std::cout << std::left << std::setw(18) << "Base Address" 
-                  << " | " << std::setw(14) << "Region Size" 
-                  << " | " << std::setw(12) << "State" 
-                  << " | " << std::setw(12) << "Protection" 
-                  << " | " << std::setw(10) << "Type" << "\n";
-        std::cout << "------------------------------------------------------------------------------------\n";
+        // Use string stream to capture the entire table output for both console and file writing
+        std::ostringstream oss;
+        oss << "\n[+] Generating Memory Map via NtQueryVirtualMemory...\n";
+        oss << "------------------------------------------------------------------------------------\n";
+        oss << std::left << std::setw(18) << "Base Address" 
+                << " | " << std::setw(14) << "Region Size" 
+                << " | " << std::setw(12) << "State" 
+                << " | " << std::setw(12) << "Protection" 
+                << " | " << std::setw(10) << "Type" << "\n";
+        oss << "------------------------------------------------------------------------------------\n";
 
         // Traverse the 64-bit user-space address space
         while (true) {
@@ -704,11 +706,11 @@ bool ReadMemoryRangeFloats(HANDLE hProcess, uintptr_t address, int count, const 
                 else if (mbi.Type == MEM_MAPPED) typeStr = "Mapped";
                 else typeStr = "Unknown";
 
-                std::cout << "  0x" << std::hex << std::setw(14) << std::setfill('0') << reinterpret_cast<uintptr_t>(mbi.BaseAddress) << std::dec
-                          << " | " << std::setw(10) << (mbi.RegionSize / 1024) << " KB"
-                          << " | " << std::setw(12) << stateStr
-                          << " | " << std::setw(12) << protStr
-                          << " | " << std::setw(10) << typeStr << "\n";
+                oss << "  0x" << std::hex << std::setw(14) << std::setfill('0') << reinterpret_cast<uintptr_t>(mbi.BaseAddress) << std::dec
+                    << " | " << std::setw(10) << (mbi.RegionSize / 1024) << " KB"
+                    << " | " << std::setw(12) << stateStr
+                    << " | " << std::setw(12) << protStr
+                    << " | " << std::setw(10) << typeStr << "\n";
             }
 
             // Calculate next region address safely to prevent overflow
@@ -724,8 +726,32 @@ bool ReadMemoryRangeFloats(HANDLE hProcess, uintptr_t address, int count, const 
             }
         }
 
-        std::cout << "------------------------------------------------------------------------------------\n";
-        std::cout << "[+] Memory map generation completed.\n\n";
+        oss << "------------------------------------------------------------------------------------\n";
+        oss << "[+] Memory map generation completed.\n\n";
+
+        // Print to console standard output
+        std::cout << oss.str();
+
+        // Determine target file path (auto-generate name if empty)
+        std::string targetFile = outFilename;
+        if (targetFile.empty()) {
+            targetFile = "dump/memory_map.txt";
+        } else {
+            targetFile = "dump/" + targetFile;
+        }
+
+        // Ensure dump directory exists and save to file
+        std::filesystem::create_directories("dump");
+
+        std::ofstream outFile(targetFile, std::ios::out);
+        if (outFile.is_open()) {
+            outFile << oss.str();
+            outFile.close();
+            std::cout << "[+] Successfully saved memory map to " << targetFile << "\n\n";
+        } else {
+            std::cerr << "[-] Warning: Failed to write memory map file to '" << targetFile << "'.\n\n";
+        }
+
         return true;
     } //\ PrintProcessMemoryMap
 

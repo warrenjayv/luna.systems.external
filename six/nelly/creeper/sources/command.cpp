@@ -17,7 +17,7 @@ void CommandHandler::PrintUsage(const char* /*programName*/) {
               << "    monitor pty<n>                                   - Stream floating registers live to PTY target (e.g. monitor pty1)\n"
               << "    stopmonitor                                      - Stop the floating register monitor\n"
               << "    pid <NewPID>                                     - Switch to a different target PID\n"
-              << "    memmap                                           - Print the memory map of the target process\n"
+              << "    memmap [Filename]                                - Print memory map of the target process and optionally save to file\n"
               << "    exit                                             - Close handle and exit session\n\n";
 }
 
@@ -189,7 +189,11 @@ int CommandHandler::StartInteractiveShell(DWORD targetPid) {
             }
         }
         else if (cmd == "memmap") {
-            ProcessHelper::PrintProcessMemoryMap(hProcess);
+            std::string filename = "";
+            if (!args.empty()) {
+                filename = args[0]; // Optional custom filename passed by user
+            }
+            ProcessHelper::PrintProcessMemoryMap(hProcess, filename);
         }
         else if (cmd == "stopmonitor") {
             ProcessHelper::StopMonitor();
