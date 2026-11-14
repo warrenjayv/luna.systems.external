@@ -170,23 +170,12 @@ int CommandHandler::StartInteractiveShell(DWORD targetPid) {
             }
         }
         else if (cmd == "monitor") {
-            if (args.empty()) {
-                std::cout << "[!] Usage: monitor pty<n> (e.g., monitor pty1)\n";
+            if (!hProcess || hProcess == INVALID_HANDLE_VALUE) {
+                std::cout << "[!] No active process attached. Open a process first.\n";
                 continue;
             }
-
-            std::string ptyArg = args[0];
-            if (ptyArg.rfind("pty", 0) == 0) {
-                try {
-                    int ptyNum = std::stoi(ptyArg.substr(3));
-                    // Start the background PTY register monitor
-                    ProcessHelper::StartMonitorPty(hProcess, targetPid, ptyNum);
-                } catch (...) {
-                    std::cerr << "[-] Invalid PTY format. Use 'monitor pty1', 'monitor pty2', etc.\n";
-                }
-            } else {
-                std::cout << "[!] Unknown monitor target. Usage: monitor pty<n>\n";
-            }
+            // Launch the background floating register monitor on the current process and PID
+            ProcessHelper::StartMonitor(hProcess, targetPid);
         }
         else if (cmd == "memmap") {
             std::string filename = "";

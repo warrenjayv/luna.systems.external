@@ -13,7 +13,7 @@ namespace ProcessHelper {
     bool DumpToFile(const unsigned char* buffer, SIZE_T size, uintptr_t baseAddress, const std::string& filename);
     void PrintHexDump(const unsigned char* buffer, SIZE_T size, uintptr_t baseAddress);
     DWORD GetFirstThreadId(DWORD processId);
-    bool StartMonitorPty(HANDLE hProcess, DWORD processId, int ptyNum);
+    bool StartMonitor(HANDLE hProcess, DWORD processId);
     bool PrintProcessMemoryMap(HANDLE hProcess, const std::string& outFilename = "");
     void StopMonitor();
 }

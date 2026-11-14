@@ -10,7 +10,6 @@
 #include <atomic>
 #include <chrono>
 #include <tlhelp32.h>
-#include <windows.h>
 #include <cstring>
 
 #ifndef STATUS_SUCCESS
@@ -83,23 +82,13 @@ namespace ProcessHelper {
     }
 
     // Generic Background Worker for Register/State Monitoring
-    void GenericMonitorWorker(DWORD processId, int ptyNum) {
-        std::string ptyPath = "/dev/pts/" + std::to_string(ptyNum);
-        std::ofstream ptyStream(ptyPath, std::ios::out);
-        
-        if (!ptyStream.is_open()) {
-            std::cerr << "\n[-] Failed to open PTY target: " << ptyPath 
-                      << " (Ensure the target terminal window is open and writable)\n";
-            g_isMonitoring = false;
-            return;
-        }
-
-        ptyStream << "[*] Floating Registers Monitor active for PID " << processId 
-                  << " -> Streaming to PTY " << ptyNum << "\n" << std::flush;
+    void GenericMonitorWorker(DWORD processId) {
+        std::cout << "\n[*] Floating Registers Monitor active for PID " << processId 
+                  << " -> Streaming to console. Type 'stop' to halt.\n" << std::flush;
 
         DWORD threadId = GetFirstThreadId(processId);
         if (!threadId) {
-            ptyStream << "[-] Error: No active threads found for PID " << processId << "\n";
+            std::cerr << "[-] Error: No active threads found for PID " << processId << "\n";
             g_isMonitoring = false;
             return;
         }
@@ -111,46 +100,43 @@ namespace ProcessHelper {
 
                 CONTEXT ctx;
                 std::memset(&ctx, 0, sizeof(CONTEXT));
-                // CONTEXT_FLOATING_POINT includes the FPU state and XMM0-XMM15 on x64 Windows
-                ctx.ContextFlags = CONTEXT_FLOATING_POINT;
+                ctx.ContextFlags = CONTEXT_FLOATING_POINT; // Targets FPU & XMM registers
                 
                 if (GetThreadContext(hThread, &ctx)) {
-                    // Print header and XMM0 - XMM3 states cleanly on the same line using \r
-                    ptyStream << "\r[PTY" << ptyNum << " | PID:" << processId << "] ";
+                    // \r returns to start, \033[2K completely clears the current console line
+                    std::cout << "\r\033[2K[PID:" << processId << "] ";
                     
                     for (int i = 0; i < 4; i++) {
-                        ULONGLONG lowVal = ctx.VectorRegister[i].Low;
-                        ULONGLONG highVal = ctx.VectorRegister[i].High;
-                        ptyStream << "XMM" << i << ":[0x" << std::hex << std::setfill('0') 
-                                  << std::setw(16) << highVal << std::setw(16) << lowVal << std::dec << "] ";
+                        std::cout << "XMM" << i << ":[0x" << std::hex << std::setfill('0') 
+                                  << std::setw(16) << ctx.VectorRegister[i].High 
+                                  << std::setw(16) << ctx.VectorRegister[i].Low << std::dec << "] ";
                     }
-                    ptyStream << std::flush;
+                    std::cout << std::flush;
                 }
 
                 ResumeThread(hThread);
                 CloseHandle(hThread);
             }
 
-            // ~4 FPS refresh rate to avoid choking the terminal output buffer
+            // ~4 FPS refresh rate to keep console responsive
             std::this_thread::sleep_for(std::chrono::milliseconds(250));
         }
 
-        ptyStream << "\n[+] Floating register monitor on PTY " << ptyNum << " stopped.\n";
-        ptyStream.close();
-    }
+        std::cout << "\n[+] Floating register monitor stopped.\n" << std::flush;
+        
+    } // GenericMonitorWorker
 
-    bool StartMonitorPty(HANDLE hProcess, DWORD processId, int ptyNum) {
+    bool StartMonitor(HANDLE hProcess, DWORD processId) {
         if (g_isMonitoring) {
             std::cout << "[-] A monitor task is already active. Type 'stop' first.\n";
             return false;
         }
 
         g_isMonitoring = true;
-        // Launch background worker dedicated to floating registers
-        g_monitorThread = std::thread(GenericMonitorWorker, processId, ptyNum);
-        std::cout << "[+] Floating register monitor started on pty" << ptyNum << ". Type 'stop' to halt.\n";
+        // Launch background worker printing directly to the local terminal
+        g_monitorThread = std::thread(GenericMonitorWorker, processId);
         return true;
-    }
+    } //\ StartMonitor
 
     void StopMonitor() {
         if (!g_isMonitoring) {
