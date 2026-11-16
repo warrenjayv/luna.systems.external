@@ -18,4 +18,5 @@ namespace ProcessHelper {
     bool PrintProcessMemoryMap(HANDLE hProcess, const std::string& outFilename = "");
     void StopMonitor();
     void StopFloatMonitor();
+    bool StartCustomPipe(const std::string& pipeName);
 }

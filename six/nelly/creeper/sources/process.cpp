@@ -7,10 +7,14 @@
 #include <iomanip>
 
 #include <thread>
+#include <mutex>
 #include <atomic>
 #include <chrono>
+#include <map>
+#include <unordered_map>
 #include <tlhelp32.h>
 #include <cstring>
+#include <vector>
 
 #ifndef STATUS_SUCCESS
 #define STATUS_SUCCESS ((NTSTATUS)0x00000000L)
@@ -54,11 +58,27 @@ typedef NTSTATUS(NTAPI* pfnNtQueryVirtualMemory)(
     PSIZE_T ReturnLength
 );
 
+struct PipeContext {
+    HANDLE hPipe = INVALID_HANDLE_VALUE;
+    std::string name;
+    std::thread connectionThread;
+};
+
 // Global control flags for the background monitor worker
 static std::atomic<bool> g_isMonitoring(false);
 static std::thread g_monitorThread;
 static std::atomic<bool> g_isFloatMonitoring(false);
 static std::thread g_floatMonitorThread;
+static std::mutex g_pipeMutex;
+
+struct ActivePipe {
+    HANDLE hPipe = INVALID_HANDLE_VALUE;
+    std::string name;
+    std::thread connectionThread;
+};
+
+// active data structures
+static std::map<std::string, std::unique_ptr<PipeContext>> g_activePipes;
 
 namespace ProcessHelper {
 
@@ -129,6 +149,9 @@ namespace ProcessHelper {
     } // GenericMonitorWorker
 
     bool StartMonitor(HANDLE hProcess, DWORD processId) {
+        // Suppress unused parameter warning since the thread worker only requires the PID
+        (void)hProcess;
+        
         if (g_isMonitoring) {
             std::cout << "[-] A monitor task is already active. Type 'stop' first.\n";
             return false;
@@ -836,5 +859,44 @@ void FloatMonitorWorker(HANDLE hProcess, uintptr_t startAddress, uintptr_t endAd
         }
         std::cout << "\n[+] Float monitor successfully stopped.\n";
     } //\ StopFloatMonitor
+
+    bool StartCustomPipe(const std::string& pipeName) {
+        std::lock_guard<std::mutex> lock(g_pipeMutex);
+        if (g_activePipes.find(pipeName) != g_activePipes.end()) {
+            std::cout << "[-] Pipe '" << pipeName << "' already exists.\n";
+            return false;
+        }
+
+        std::wstring pipeNameW = L"\\\\.\\pipe\\" + std::wstring(pipeName.begin(), pipeName.end());
+
+        HANDLE hPipe = CreateNamedPipeW(
+            pipeNameW.c_str(),
+            PIPE_ACCESS_OUTBOUND,
+            PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
+            1, 65536, 65536, 0, NULL
+        );
+
+        if (hPipe == INVALID_HANDLE_VALUE) {
+            std::cerr << "[-] Failed to create named pipe '" << pipeName << "'. Error: " << GetLastError() << "\n";
+            return false;
+        }
+
+        // PipeContext ctx;
+        auto ctx = std::make_unique<PipeContext>();
+        ctx->hPipe = hPipe;
+        ctx->name = pipeName;
+
+        ctx->connectionThread = std::thread([pipeName, hPipe]() {
+            std::cout << "\n[+] Pipe '" << pipeName << "' created. Waiting for reader on //./pipe/" << pipeName << " ...\n" << std::flush;
+            if (ConnectNamedPipe(hPipe, NULL) || GetLastError() == ERROR_PIPE_CONNECTED) {
+                std::cout << "[+] Reader successfully connected to pipe '" << pipeName << "'!\n" << std::flush;
+            }
+        });
+        ctx->connectionThread.detach();
+
+        g_activePipes.try_emplace(pipeName, std::move(ctx));
+        std::cout << "[+] Custom pipe '" << pipeName << "' registered successfully.\n";
+        return true;
+    }
 
 } //\ ProcessHelper

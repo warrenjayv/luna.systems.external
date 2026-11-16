@@ -8,19 +8,20 @@
 
 void CommandHandler::PrintUsage(const char* /*programName*/) {
     std::cout << "\n[+] Available Interactive Commands:\n"
-              << "    getbase                                            - Get remote process base address\n"
-              << "    modules                                            - List all loaded modules and base addresses\n" 
-              << "    readaddr <HexAddress> [Size]                       - Read specific memory address\n"
-              << "    readmem <StartHex> <FinishHex> [IP] [Port]         - Read memory range and dump\n"
-              << "    readfloat <HexAddress> [Count] [Filename]          - Read and parse memory as floats/doubles and dump\n"
-              << "    heaps                                              - List all heaps in the target process\n" 
-              << "    monitor pty<n>                                     - Stream floating registers live to PTY target (e.g. monitor pty1)\n"
-              << "    stopmonitor                                        - Stop the floating register monitor\n"
-              << "    monitorfloats <StartHex> <FinishHex> [IntervalMs]  - Monitor a memory range for float values and log to file\n"
-              << "    stopfloats                                         - Stop the float range monitor\n"
-              << "    pid <NewPID>                                       - Switch to a different target PID\n"
-              << "    memmap [Filename]                                  - Print memory map of the target process and optionally save to file\n"
-              << "    exit                                               - Close handle and exit session\n\n";
+              << " pipe <pipe_name>                                      - Create a custom named pipe for data streaming\n"
+              << " getbase                                            - Get remote process base address\n"
+              << " modules                                            - List all loaded modules and base addresses\n" 
+              << " readaddr <HexAddress> [Size]                       - Read specific memory address\n"
+              << " readmem <StartHex> <FinishHex> [IP] [Port]         - Read memory range and dump\n"
+              << " readfloat <HexAddress> [Count] [Filename]          - Read and parse memory as floats/doubles and dump\n"
+              << " heaps                                              - List all heaps in the target process\n" 
+              << " monitor pty<n>                                     - Stream floating registers live to PTY target (e.g. monitor pty1)\n"
+              << " stopmonitor                                        - Stop the floating register monitor\n"
+              << " monitorfloats <StartHex> <FinishHex> [IntervalMs]  - Monitor a memory range for float values and log to file\n"
+              << " stopfloats                                         - Stop the float range monitor\n"
+              << " pid <NewPID>                                       - Switch to a different target PID\n"
+              << " memmap [Filename]                                  - Print memory map of the target process and optionally save to file\n"
+              << " exit                                               - Close handle and exit session\n\n";
 }
 
 int CommandHandler::StartInteractiveShell(DWORD targetPid) {
@@ -209,6 +210,15 @@ int CommandHandler::StartInteractiveShell(DWORD targetPid) {
         }
         else if (cmd == "stopfloats") {
             ProcessHelper::StopFloatMonitor();
+        }
+        else if (cmd == "pipe") {
+                if (args.empty()) {
+                    std::cout << "[!] Usage: pipe <pipe_name>\n"
+                              << "    Example: pipe floats_alpha\n";
+                    continue;
+                }
+                std::string pipeName = args[0];
+                ProcessHelper::StartCustomPipe(pipeName);
         }
         else {
             std::cout << "[-] Unknown command: " << cmd << ". Type 'help' for options.\n";
