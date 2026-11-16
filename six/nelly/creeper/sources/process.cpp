@@ -62,6 +62,9 @@ struct PipeContext {
     HANDLE hPipe = INVALID_HANDLE_VALUE;
     std::string name;
     std::thread connectionThread;
+    std::atomic<bool> isRunning{true};
+    std::atomic<bool> clientConnected{false};
+    std::thread listenerThread;
 };
 
 // Global control flags for the background monitor worker
@@ -775,18 +778,24 @@ void FloatMonitorWorker(HANDLE hProcess, DWORD processId, std::string pipeName, 
                   << "' (0x" << std::hex << startAddress << " -> 0x" << endAddress << std::dec << ").\n" << std::flush;
 
         while (g_isFloatMonitoring) {
-            HANDLE hTargetPipe = INVALID_HANDLE_VALUE;
+            PipeContext* pCtx = nullptr;
             {
                 std::lock_guard<std::mutex> lock(g_pipeMutex);
                 auto it = g_activePipes.find(pipeName);
                 if (it != g_activePipes.end()) {
-                    hTargetPipe = it->second->hPipe; // Retrieve handle from unique_ptr context
+                    pCtx = it->second.get();
                 }
             }
 
-            if (hTargetPipe == INVALID_HANDLE_VALUE) {
-                std::cerr << "[-] Error: Pipe '" << pipeName << "' does not exist or was closed.\n";
+            if (!pCtx || pCtx->hPipe == INVALID_HANDLE_VALUE) {
+                std::cerr << "[-] Error: Pipe '" << pipeName << "' does not exist.\n";
                 break;
+            }
+
+            // If tmux cat hasn't connected yet, wait quietly
+            if (!pCtx->clientConnected) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(200));
+                continue;
             }
 
             std::vector<unsigned char> buffer(totalBytes, 0);
@@ -835,9 +844,10 @@ void FloatMonitorWorker(HANDLE hProcess, DWORD processId, std::string pipeName, 
 
             std::string outStr = oss.str();
             DWORD written = 0;
-            BOOL success = WriteFile(hTargetPipe, outStr.data(), (DWORD)outStr.size(), &written, NULL);
+            BOOL success = WriteFile(pCtx->hPipe, outStr.data(), (DWORD)outStr.size(), &written, NULL);
             if (!success) {
                 // If the reader disconnected or broke, pause briefly before retrying
+                pCtx->clientConnected = false;
                 std::this_thread::sleep_for(std::chrono::milliseconds(200));
                 continue;
             }
@@ -896,7 +906,8 @@ void FloatMonitorWorker(HANDLE hProcess, DWORD processId, std::string pipeName, 
             pipeNameW.c_str(),
             PIPE_ACCESS_OUTBOUND,
             PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
-            1, 65536, 65536, 0, NULL
+            PIPE_UNLIMITED_INSTANCES,
+            65536, 65536, 0, NULL
         );
 
         if (hPipe == INVALID_HANDLE_VALUE) {
@@ -908,11 +919,29 @@ void FloatMonitorWorker(HANDLE hProcess, DWORD processId, std::string pipeName, 
         auto ctx = std::make_unique<PipeContext>();
         ctx->hPipe = hPipe;
         ctx->name = pipeName;
+        ctx->isRunning = true;
 
-        ctx->connectionThread = std::thread([pipeName, hPipe]() {
-            std::cout << "\n[+] Pipe '" << pipeName << "' created. Waiting for reader on //./pipe/" << pipeName << " ...\n" << std::flush;
-            if (ConnectNamedPipe(hPipe, NULL) || GetLastError() == ERROR_PIPE_CONNECTED) {
-                std::cout << "[+] Reader successfully connected to pipe '" << pipeName << "'!\n" << std::flush;
+        ctx->listenerThread = std::thread([ctxPtr = ctx.get()]() {
+            while (ctxPtr->isRunning) {
+                std::cout << "\n[+] Pipe '" << ctxPtr->name << "' waiting for reader on //./pipe/" << ctxPtr->name << " ...\n" << std::flush;
+                
+                BOOL connected = ConnectNamedPipe(ctxPtr->hPipe, NULL) ? TRUE : (GetLastError() == ERROR_PIPE_CONNECTED);
+                if (connected) {
+                    std::cout << "[+] Reader connected to pipe '" << ctxPtr->name << "'!\n" << std::flush;
+                    ctxPtr->clientConnected = true;
+
+                    // Hold the connection open until client disconnects
+                    while (ctxPtr->isRunning && ctxPtr->clientConnected) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                    }
+
+                    // Cleanly disconnect so the pipe can be reused immediately without 'busy' errors
+                    DisconnectNamedPipe(ctxPtr->hPipe);
+                    ctxPtr->clientConnected = false;
+                    std::cout << "[+] Reader disconnected from pipe '" << ctxPtr->name << "'. Ready for reconnection.\n" << std::flush;
+                } else {
+                    break;
+                }
             }
         });
         ctx->connectionThread.detach();
