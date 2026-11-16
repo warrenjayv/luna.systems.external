@@ -59,12 +59,11 @@ typedef NTSTATUS(NTAPI* pfnNtQueryVirtualMemory)(
 );
 
 struct PipeContext {
-    HANDLE hPipe = INVALID_HANDLE_VALUE;
     std::string name;
-    std::thread connectionThread;
+    std::wstring pipeNameW;
+    HANDLE activeWritePipe = INVALID_HANDLE_VALUE; // Current handle being written to
+    std::mutex handleMutex;
     std::atomic<bool> isRunning{true};
-    std::atomic<bool> clientConnected{false};
-    std::thread listenerThread;
 };
 
 // Global control flags for the background monitor worker
@@ -84,8 +83,79 @@ struct ActivePipe {
 static std::map<std::string, std::unique_ptr<PipeContext>> g_activePipes;
 
 namespace ProcessHelper {
+    HANDLE CreateNewPipeInstance(const std::wstring& pipeNameW) {
+        return CreateNamedPipeW(
+            pipeNameW.c_str(),
+            PIPE_ACCESS_OUTBOUND,
+            PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+            PIPE_UNLIMITED_INSTANCES,
+            65536,
+            65536,
+            0,
+            nullptr
+        );
+    } //\ CreateNewPipeInstance
 
-// Helper to locate the first active thread ID for a target process
+// Native Windows thread procedure for listening to pipe connections
+    DWORD WINAPI PipeListenerThreadProc(LPVOID lpParam) {
+        PipeContext* ctx = static_cast<PipeContext*>(lpParam);
+
+        while (ctx->isRunning) {
+            // 1. Always spin up a fresh, idle pipe instance ready for the next reader
+            HANDLE hNextPipe = CreateNewPipeInstance(ctx->pipeNameW);
+            if (hNextPipe == INVALID_HANDLE_VALUE) {
+                std::cerr << "[-] Pipe '" << ctx->name << "' instance error: " << GetLastError() << "\n";
+                Sleep(500);
+                continue;
+            }
+
+            // 2. Wait for a reader (cat) to attach to this fresh instance
+            BOOL connected = ConnectNamedPipe(hNextPipe, NULL) ? TRUE : (GetLastError() == ERROR_PIPE_CONNECTED);
+            if (connected && ctx->isRunning) {
+                std::cout << "\n[+] Reader connected to pipe '" << ctx->name << "'!\n" << std::flush;
+
+                // 3. Swap the newly connected handle in as the active output target, closing any stale one
+                std::lock_guard<std::mutex> lock(ctx->handleMutex);
+                if (ctx->activeWritePipe != INVALID_HANDLE_VALUE) {
+                    DisconnectNamedPipe(ctx->activeWritePipe);
+                    CloseHandle(ctx->activeWritePipe);
+                }
+                ctx->activeWritePipe = hNextPipe;
+                // Loop immediately repeats, creating a new waiting instance so the pipe is NEVER busy
+            } else {
+                CloseHandle(hNextPipe);
+                break;
+            }
+        }
+        return 0;
+    } //\ PipeListenerThreadProc
+
+    bool StartCustomPipe(const std::string& pipeName) {
+        std::lock_guard<std::mutex> lock(g_pipeMutex);
+        if (g_activePipes.find(pipeName) != g_activePipes.end()) {
+            std::cout << "[-] Pipe '" << pipeName << "' already exists.\n";
+            return false;
+        }
+
+        auto ctx = std::make_unique<PipeContext>();
+        ctx->name = pipeName;
+        ctx->pipeNameW = L"\\\\.\\pipe\\" + std::wstring(pipeName.begin(), pipeName.end());
+        ctx->isRunning = true;
+
+        // Pre-warm 3 concurrent pipe listener threads so the kernel ALWAYS has idle instances ready
+        for (int i = 0; i < 3; ++i) {
+            HANDLE hThread = CreateThread(nullptr, 0, PipeListenerThreadProc, ctx.get(), 0, nullptr);
+            if (hThread) {
+                CloseHandle(hThread);
+            }
+        }
+
+        g_activePipes.emplace(pipeName, std::move(ctx));
+        std::cout << "[+] Custom pipe '" << pipeName << "' registered (3x pool) on //./pipe/" << pipeName << "\n";
+        return true;
+    } //\ StartCustomPipe
+
+    // Helper to locate the first active thread ID for a target process
     DWORD GetFirstThreadId(DWORD processId) {
         HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
         if (hSnapshot == INVALID_HANDLE_VALUE) return 0;
@@ -787,14 +857,21 @@ void FloatMonitorWorker(HANDLE hProcess, DWORD processId, std::string pipeName, 
                 }
             }
 
-            if (!pCtx || pCtx->hPipe == INVALID_HANDLE_VALUE) {
-                std::cerr << "[-] Error: Pipe '" << pipeName << "' does not exist.\n";
+            // 1. Guard against missing/deleted pipe context
+            if (!pCtx) {
+                std::cerr << "[-] Error: Pipe '" << pipeName << "' not found.\n";
                 break;
             }
 
-            // If tmux cat hasn't connected yet, wait quietly
-            if (!pCtx->clientConnected) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            // 2. Skip reading target memory if no tmux reader is currently attached
+            bool hasReader = false;
+            {
+                std::lock_guard<std::mutex> hLock(pCtx->handleMutex);
+                hasReader = (pCtx->activeWritePipe != INVALID_HANDLE_VALUE);
+            }
+
+            if (!hasReader) {
+                Sleep(intervalMs);
                 continue;
             }
 
@@ -843,19 +920,27 @@ void FloatMonitorWorker(HANDLE hProcess, DWORD processId, std::string pipeName, 
             oss << "------------------------------------------------------------------\n";
 
             std::string outStr = oss.str();
-            DWORD written = 0;
-            BOOL success = WriteFile(pCtx->hPipe, outStr.data(), (DWORD)outStr.size(), &written, NULL);
-            if (!success) {
-                // If the reader disconnected or broke, pause briefly before retrying
-                pCtx->clientConnected = false;
-                std::this_thread::sleep_for(std::chrono::milliseconds(200));
-                continue;
+            {
+                std::lock_guard<std::mutex> hLock(pCtx->handleMutex);
+                if (pCtx->activeWritePipe != INVALID_HANDLE_VALUE) {
+                    DWORD written = 0;
+                    BOOL success = WriteFile(pCtx->activeWritePipe, outStr.data(), (DWORD)outStr.size(), &written, NULL);
+                    if (!success) {
+                        // Reader closed cat; clean up this handle cleanly
+                        DisconnectNamedPipe(pCtx->activeWritePipe);
+                        CloseHandle(pCtx->activeWritePipe);
+                        pCtx->activeWritePipe = INVALID_HANDLE_VALUE;
+                    }
+                }
+
+                Sleep(intervalMs);
             }
 
             std::this_thread::sleep_for(std::chrono::milliseconds(intervalMs));
         }
 
         std::cout << "\n[+] Float monitor targeting pipe '" << pipeName << "' stopped.\n" << std::flush;
+
     } //\ FloatMonitorWorker
 
     bool StartFloatMonitor(HANDLE hProcess, DWORD processId, const std::string& pipeName, uintptr_t startAddress, uintptr_t endAddress, int intervalMs, SIZE_T stride) {
@@ -892,63 +977,5 @@ void FloatMonitorWorker(HANDLE hProcess, DWORD processId, std::string pipeName, 
         }
         std::cout << "\n[+] Float monitor successfully stopped.\n";
     } //\ StopFloatMonitor
-
-    bool StartCustomPipe(const std::string& pipeName) {
-        std::lock_guard<std::mutex> lock(g_pipeMutex);
-        if (g_activePipes.find(pipeName) != g_activePipes.end()) {
-            std::cout << "[-] Pipe '" << pipeName << "' already exists.\n";
-            return false;
-        }
-
-        std::wstring pipeNameW = L"\\\\.\\pipe\\" + std::wstring(pipeName.begin(), pipeName.end());
-
-        HANDLE hPipe = CreateNamedPipeW(
-            pipeNameW.c_str(),
-            PIPE_ACCESS_OUTBOUND,
-            PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
-            PIPE_UNLIMITED_INSTANCES,
-            65536, 65536, 0, NULL
-        );
-
-        if (hPipe == INVALID_HANDLE_VALUE) {
-            std::cerr << "[-] Failed to create named pipe '" << pipeName << "'. Error: " << GetLastError() << "\n";
-            return false;
-        }
-
-        // PipeContext ctx;
-        auto ctx = std::make_unique<PipeContext>();
-        ctx->hPipe = hPipe;
-        ctx->name = pipeName;
-        ctx->isRunning = true;
-
-        ctx->listenerThread = std::thread([ctxPtr = ctx.get()]() {
-            while (ctxPtr->isRunning) {
-                std::cout << "\n[+] Pipe '" << ctxPtr->name << "' waiting for reader on //./pipe/" << ctxPtr->name << " ...\n" << std::flush;
-                
-                BOOL connected = ConnectNamedPipe(ctxPtr->hPipe, NULL) ? TRUE : (GetLastError() == ERROR_PIPE_CONNECTED);
-                if (connected) {
-                    std::cout << "[+] Reader connected to pipe '" << ctxPtr->name << "'!\n" << std::flush;
-                    ctxPtr->clientConnected = true;
-
-                    // Hold the connection open until client disconnects
-                    while (ctxPtr->isRunning && ctxPtr->clientConnected) {
-                        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                    }
-
-                    // Cleanly disconnect so the pipe can be reused immediately without 'busy' errors
-                    DisconnectNamedPipe(ctxPtr->hPipe);
-                    ctxPtr->clientConnected = false;
-                    std::cout << "[+] Reader disconnected from pipe '" << ctxPtr->name << "'. Ready for reconnection.\n" << std::flush;
-                } else {
-                    break;
-                }
-            }
-        });
-        ctx->connectionThread.detach();
-
-        g_activePipes.try_emplace(pipeName, std::move(ctx));
-        std::cout << "[+] Custom pipe '" << pipeName << "' registered successfully.\n";
-        return true;
-    }
 
 } //\ ProcessHelper
