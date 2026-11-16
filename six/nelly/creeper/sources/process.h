@@ -14,6 +14,8 @@ namespace ProcessHelper {
     void PrintHexDump(const unsigned char* buffer, SIZE_T size, uintptr_t baseAddress);
     DWORD GetFirstThreadId(DWORD processId);
     bool StartMonitor(HANDLE hProcess, DWORD processId);
+    bool StartFloatMonitor(HANDLE hProcess, uintptr_t startAddress, uintptr_t endAddress, int intervalMs, SIZE_T stride);
     bool PrintProcessMemoryMap(HANDLE hProcess, const std::string& outFilename = "");
     void StopMonitor();
+    void StopFloatMonitor();
 }

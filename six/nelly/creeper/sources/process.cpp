@@ -57,6 +57,8 @@ typedef NTSTATUS(NTAPI* pfnNtQueryVirtualMemory)(
 // Global control flags for the background monitor worker
 static std::atomic<bool> g_isMonitoring(false);
 static std::thread g_monitorThread;
+static std::atomic<bool> g_isFloatMonitoring(false);
+static std::thread g_floatMonitorThread;
 
 namespace ProcessHelper {
 
@@ -598,7 +600,7 @@ bool ReadMemoryRangeFloats(HANDLE hProcess, uintptr_t address, int count, const 
         }
         oss << "--------------------------------------------------\n";
 
-        std::cout << oss.str() << "\n";
+        //\ MUTING std::cout << oss.str() << "\n";
 
         std::string targetFile = outFilename;
         if (targetFile.empty()) {
@@ -716,7 +718,7 @@ bool ReadMemoryRangeFloats(HANDLE hProcess, uintptr_t address, int count, const 
         oss << "[+] Memory map generation completed.\n\n";
 
         // Print to console standard output
-        std::cout << oss.str();
+        //\ MUTING std::cout << oss.str();
 
         // Determine target file path (auto-generate name if empty)
         std::string targetFile = outFilename;
@@ -740,5 +742,99 @@ bool ReadMemoryRangeFloats(HANDLE hProcess, uintptr_t address, int count, const 
 
         return true;
     } //\ PrintProcessMemoryMap
+
+void FloatMonitorWorker(HANDLE hProcess, uintptr_t startAddress, uintptr_t endAddress, int intervalMs, SIZE_T stride) {
+        if (endAddress <= startAddress) {
+            std::cerr << "[-] Error: End address must be greater than start address.\n";
+            g_isFloatMonitoring = false;
+            return;
+        }
+
+        if (stride == 0) stride = sizeof(float);
+        SIZE_T totalBytes = endAddress - startAddress;
+        int count = totalBytes / stride;
+        if (count <= 0) count = 1;
+
+        std::filesystem::create_directories("dump");
+        std::string logPath = "dump/live_floats.txt";
+
+        std::cout << "\n[+] Float Range Monitor active (0x" << std::hex << startAddress 
+                  << " -> 0x" << endAddress << std::dec << " | Stride: 0x" << std::hex << stride << std::dec 
+                  << " | Count: " << count << ") -> Writing to " << logPath << "\n" << std::flush;
+
+        while (g_isFloatMonitoring) {
+            std::ofstream outFile(logPath, std::ios::out);
+            if (outFile.is_open()) {
+                std::ostringstream oss;
+                oss << "[+] Live 32-bit Float Monitor (Range: 0x" << std::hex << startAddress 
+                    << " - 0x" << endAddress << std::dec << "):\n";
+                oss << "------------------------------------------------------------------\n";
+                oss << std::left << std::setw(18) << "Address" 
+                    << " | " << std::setw(15) << "Float (32-bit)" 
+                    << " | Status\n";
+                oss << "------------------------------------------------------------------\n";
+
+                for (int i = 0; i < count; i++) {
+                    uintptr_t currentAddr = startAddress + (i * stride);
+                    float fVal = 0.0f;
+                    bool readable = false;
+
+                    // 1. Verify memory page is committed and readable before reading
+                    MEMORY_BASIC_INFORMATION mbi;
+                    if (VirtualQueryEx(hProcess, (LPCVOID)currentAddr, &mbi, sizeof(mbi)) == sizeof(mbi)) {
+                        // Check if memory is committed and does not have restrictive protection flags
+                        bool isCommitted = (mbi.State == MEM_COMMIT);
+                        bool isProtected = (mbi.Protect & PAGE_NOACCESS) || 
+                                           (mbi.Protect & PAGE_GUARD);
+
+                        if (isCommitted && !isProtected) {
+                            SIZE_T bytesRead = 0;
+                            if (ReadProcessMemory(hProcess, (LPCVOID)currentAddr, &fVal, sizeof(float), &bytesRead) && bytesRead == sizeof(float)) {
+                                readable = true;
+                            }
+                        }
+                    }
+
+                    oss << "  0x" << std::hex << std::setw(12) << std::setfill('0') << currentAddr << std::dec << " | ";
+                    if (readable) {
+                        oss << std::setw(15) << std::fixed << std::setprecision(4) << fVal << " | OK\n";
+                    } else {
+                        oss << std::setw(15) << "--------" << " | Unaccessible / Unmapped\n";
+                    }
+                }
+                oss << "------------------------------------------------------------------\n";
+                outFile << oss.str();
+                outFile.close();
+            }
+
+            std::this_thread::sleep_for(std::chrono::milliseconds(intervalMs));
+        }
+
+        std::cout << "\n[+] Float range monitor stopped.\n" << std::flush;
+    } //\ FloatMonitorWorker
+
+    bool StartFloatMonitor(HANDLE hProcess, uintptr_t startAddress, uintptr_t endAddress, int intervalMs, SIZE_T stride) {
+        if (g_isFloatMonitoring) {
+            std::cout << "[-] Float monitor is already running. Type 'stopfloats' first.\n";
+            return false;
+        }
+
+        g_isFloatMonitoring = true;
+        g_floatMonitorThread = std::thread(FloatMonitorWorker, hProcess, startAddress, endAddress, intervalMs, stride);
+        return true;
+    } //\  StartFloatMonitor
+
+    void StopFloatMonitor() {
+        if (!g_isFloatMonitoring) {
+            std::cout << "[-] No active float monitor running.\n";
+            return;
+        }
+
+        g_isFloatMonitoring = false;
+        if (g_floatMonitorThread.joinable()) {
+            g_floatMonitorThread.join();
+        }
+        std::cout << "\n[+] Float monitor successfully stopped.\n";
+    } //\ StopFloatMonitor
 
 } //\ ProcessHelper
