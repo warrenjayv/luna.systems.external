@@ -17,7 +17,7 @@ void CommandHandler::PrintUsage(const char* /*programName*/) {
               << " heaps                                              - List all heaps in the target process\n" 
               << " monitor pty<n>                                     - Stream floating registers live to PTY target (e.g. monitor pty1)\n"
               << " stopmonitor                                        - Stop the floating register monitor\n"
-              << " monitorfloats <StartHex> <FinishHex> [IntervalMs]  - Monitor a memory range for float values and log to file\n"
+              << " floats <pipe_name> <start_address> <end_address> [interval_ms] [stride] \n   - Monitor a memory range for float values and log to file\n"
               << " stopfloats                                         - Stop the float range monitor\n"
               << " pid <NewPID>                                       - Switch to a different target PID\n"
               << " memmap [Filename]                                  - Print memory map of the target process and optionally save to file\n"
@@ -190,23 +190,32 @@ int CommandHandler::StartInteractiveShell(DWORD targetPid) {
         else if (cmd == "stopmonitor") {
             ProcessHelper::StopMonitor();
         }
-        else if (cmd == "monitorfloats") {
-            if (!hProcess || hProcess == INVALID_HANDLE_VALUE) {
-                std::cout << "[!] No active process attached. Open a process first.\n";
-                continue;
-            }
-            if (args.size() < 2) {
-                std::cout << "[!] Usage: monitorfloats <StartHex> <FinishHex> [IntervalMs]\n"
-                        << "    Example: monitorfloats 0x14E000 0x14E200 250\n";
+        else if (cmd == "floats") {
+            // Ensure at least pipe name, start address, and end address are provided
+            if (args.size() < 3) {
+                std::cout << "[!] Usage: monitorfloats <pipe_name> <start_address> <end_address> [interval_ms] [stride]\n"
+                          << "    Example: monitorfloats floats_alpha 0x140000000 0x140001000 500 4\n";
                 continue;
             }
 
-            uintptr_t startAddr = std::stoull(args[0], nullptr, 16);
-            uintptr_t endAddr = std::stoull(args[1], nullptr, 16);
-            int intervalMs = (args.size() >= 3) ? std::stoi(args[2]) : 250; // Default 250ms refresh
-            SIZE_T stride = (args.size() >= 4) ? std::stoull(args[3], nullptr, 16) : sizeof(float);
+            if (!hProcess || hProcess == INVALID_HANDLE_VALUE || targetPid == 0) {
+                std::cout << "[-] Error: No active process attached. Attach to a process first.\n";
+                continue;
+            }
 
-            ProcessHelper::StartFloatMonitor(hProcess, startAddr, endAddr, intervalMs, stride);
+            // 1. Extract pipe name from the first argument
+            std::string pipeName = args[0];
+
+            // 2. Parse memory range boundaries (hex format)
+            uintptr_t startAddr = std::stoull(args[1], nullptr, 16);
+            uintptr_t endAddr = std::stoull(args[2], nullptr, 16);
+
+            // 3. Optional interval and stride with sensible defaults
+            int intervalMs = (args.size() > 3) ? std::stoi(args[3]) : 1000;
+            SIZE_T stride = (args.size() > 4) ? std::stoull(args[4]) : sizeof(float);
+
+            // 4. Invoke the float monitor helper using correct local handles
+            ProcessHelper::StartFloatMonitor(hProcess, targetPid, pipeName, startAddr, endAddr, intervalMs, stride);
         }
         else if (cmd == "stopfloats") {
             ProcessHelper::StopFloatMonitor();
