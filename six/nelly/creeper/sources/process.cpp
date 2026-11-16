@@ -66,12 +66,23 @@ struct PipeContext {
     std::atomic<bool> isRunning{true};
 };
 
+struct FloatMonitorParams {
+    HANDLE hProcess;
+    DWORD processId;
+    std::string ptyTarget;
+    uintptr_t startAddress;
+    uintptr_t endAddress;
+    int intervalMs;
+    SIZE_T stride;
+};
+
 // Global control flags for the background monitor worker
 static std::atomic<bool> g_isMonitoring(false);
 static std::thread g_monitorThread;
 static std::atomic<bool> g_isFloatMonitoring(false);
 static std::thread g_floatMonitorThread;
 static std::mutex g_pipeMutex;
+static HANDLE g_hFloatMonitorThread = NULL;
 
 struct ActivePipe {
     HANDLE hPipe = INVALID_HANDLE_VALUE;
@@ -839,42 +850,30 @@ bool ReadMemoryRangeFloats(HANDLE hProcess, uintptr_t address, int count, const 
         return true;
     } //\ PrintProcessMemoryMap
 
-void FloatMonitorWorker(HANDLE hProcess, DWORD processId, std::string pipeName, uintptr_t startAddress, uintptr_t endAddress, int intervalMs, SIZE_T stride) {
+
+
+    void FloatMonitorWorker(HANDLE hProcess, DWORD processId, std::string ptyTarget, uintptr_t startAddress, uintptr_t endAddress, int intervalMs, SIZE_T stride) {
+        // Allow passing either "/dev/pty3" or just "3"
+        std::string ptyPath = ptyTarget;
+        if (ptyPath.find("/dev/") != 0) {
+            ptyPath = "/dev/pty" + ptyTarget;
+        }
+
+        FILE* ptyOut = fopen(ptyPath.c_str(), "w");
+        if (!ptyOut) {
+            std::cerr << "[-] Failed to open target terminal '" << ptyPath << "'. Check 'tty' in your target pane.\n";
+            g_isFloatMonitoring = false;
+            return;
+        }
+
         SIZE_T totalBytes = endAddress - startAddress;
         int count = totalBytes / stride;
         if (count <= 0) count = 1;
 
-        std::cout << "\n[+] Float Monitor started targeting pipe '" << pipeName 
+        std::cout << "\n[+] Float Monitor streaming directly to '" << ptyPath 
                   << "' (0x" << std::hex << startAddress << " -> 0x" << endAddress << std::dec << ").\n" << std::flush;
 
         while (g_isFloatMonitoring) {
-            PipeContext* pCtx = nullptr;
-            {
-                std::lock_guard<std::mutex> lock(g_pipeMutex);
-                auto it = g_activePipes.find(pipeName);
-                if (it != g_activePipes.end()) {
-                    pCtx = it->second.get();
-                }
-            }
-
-            // 1. Guard against missing/deleted pipe context
-            if (!pCtx) {
-                std::cerr << "[-] Error: Pipe '" << pipeName << "' not found.\n";
-                break;
-            }
-
-            // 2. Skip reading target memory if no tmux reader is currently attached
-            bool hasReader = false;
-            {
-                std::lock_guard<std::mutex> hLock(pCtx->handleMutex);
-                hasReader = (pCtx->activeWritePipe != INVALID_HANDLE_VALUE);
-            }
-
-            if (!hasReader) {
-                Sleep(intervalMs);
-                continue;
-            }
-
             std::vector<unsigned char> buffer(totalBytes, 0);
             SIZE_T bytesRead = 0;
 
@@ -887,9 +886,8 @@ void FloatMonitorWorker(HANDLE hProcess, DWORD processId, std::string pipeName, 
             }
 
             std::ostringstream oss;
-            // ANSI escape sequence to clear screen and reset cursor for live streaming terminal refresh
             oss << "\033[2J\033[H";
-            oss << "[+] Float Monitor -> Pipe: '" << pipeName << "' (PID: " << processId 
+            oss << "[+] Float Monitor -> " << ptyPath << " (PID: " << processId 
                 << " | 0x" << std::hex << startAddress << " - 0x" << endAddress << std::dec << "):\n";
             oss << "------------------------------------------------------------------\n";
             oss << std::left << std::setw(18) << "Address" 
@@ -902,7 +900,9 @@ void FloatMonitorWorker(HANDLE hProcess, DWORD processId, std::string pipeName, 
                     uintptr_t currentAddr = startAddress + (i * stride);
                     size_t offset = i * stride;
 
-                    oss << "  0x" << std::hex << std::setw(12) << std::setfill('0') << currentAddr << std::dec << " | ";
+                    oss << "  0x" << std::hex << std::setw(12) << std::setfill('0') << currentAddr 
+                        << std::dec << std::setfill(' ') << " | ";
+
                     if (offset + sizeof(float) <= bytesRead) {
                         float fVal = *reinterpret_cast<float*>(buffer.data() + offset);
                         oss << std::setw(15) << std::fixed << std::setprecision(4) << fVal << " | OK\n";
@@ -913,55 +913,78 @@ void FloatMonitorWorker(HANDLE hProcess, DWORD processId, std::string pipeName, 
             } else {
                 for (int i = 0; i < count; i++) {
                     uintptr_t currentAddr = startAddress + (i * stride);
-                    oss << "  0x" << std::hex << std::setw(12) << std::setfill('0') << currentAddr << std::dec << " | "
+                    oss << "  0x" << std::hex << std::setw(12) << std::setfill('0') << currentAddr 
+                        << std::dec << std::setfill(' ') << " | "
                         << std::setw(15) << "--------" << " | Unaccessible / Unmapped\n";
                 }
             }
             oss << "------------------------------------------------------------------\n";
 
             std::string outStr = oss.str();
-            {
-                std::lock_guard<std::mutex> hLock(pCtx->handleMutex);
-                if (pCtx->activeWritePipe != INVALID_HANDLE_VALUE) {
-                    DWORD written = 0;
-                    BOOL success = WriteFile(pCtx->activeWritePipe, outStr.data(), (DWORD)outStr.size(), &written, NULL);
-                    if (!success) {
-                        // Reader closed cat; clean up this handle cleanly
-                        DisconnectNamedPipe(pCtx->activeWritePipe);
-                        CloseHandle(pCtx->activeWritePipe);
-                        pCtx->activeWritePipe = INVALID_HANDLE_VALUE;
-                    }
-                }
-
-                Sleep(intervalMs);
+            if (fwrite(outStr.data(), 1, outStr.size(), ptyOut) == 0 || fflush(ptyOut) != 0) {
+                std::cerr << "\n[-] Lost connection to '" << ptyPath << "' (terminal closed).\n";
+                break;
             }
 
-            std::this_thread::sleep_for(std::chrono::milliseconds(intervalMs));
+            Sleep(intervalMs);
         }
 
-        std::cout << "\n[+] Float monitor targeting pipe '" << pipeName << "' stopped.\n" << std::flush;
-
+        fclose(ptyOut);
+        g_isFloatMonitoring = false;
+        std::cout << "\n[+] Float monitor on '" << ptyPath << "' stopped.\n" << std::flush;
     } //\ FloatMonitorWorker
 
-    bool StartFloatMonitor(HANDLE hProcess, DWORD processId, const std::string& pipeName, uintptr_t startAddress, uintptr_t endAddress, int intervalMs, SIZE_T stride) {
+    DWORD WINAPI FloatMonitorThreadProc(LPVOID lpParam) {
+        std::unique_ptr<FloatMonitorParams> params(static_cast<FloatMonitorParams*>(lpParam));
+        FloatMonitorWorker(
+            params->hProcess,
+            params->processId,
+            params->ptyTarget,
+            params->startAddress,
+            params->endAddress,
+            params->intervalMs,
+            params->stride
+        );
+        return 0;
+    } //\ FloatMonitorThreadProc
+
+    bool StartFloatMonitor(HANDLE hProcess, DWORD processId, const std::string& ptyTarget, uintptr_t startAddress, uintptr_t endAddress, int intervalMs, SIZE_T stride) {
         if (g_isFloatMonitoring) {
             std::cout << "[-] Float monitor is already running. Type 'stopfloats' first.\n";
             return false;
         }
 
-        {
-            std::lock_guard<std::mutex> lock(g_pipeMutex);
-            if (g_activePipes.find(pipeName) == g_activePipes.end()) {
-                std::cout << "[-] Error: Pipe '" << pipeName << "' does not exist. Run 'pipe " << pipeName << "' first.\n";
-                return false;
-            }
+        if (stride == 0) {
+            stride = sizeof(float);
         }
 
-        if (stride == 0) stride = sizeof(float);
+        // Clean up any finished handle from a previous run
+        if (g_hFloatMonitorThread != NULL) {
+            CloseHandle(g_hFloatMonitorThread);
+            g_hFloatMonitorThread = NULL;
+        }
+
+        auto params = std::make_unique<FloatMonitorParams>(FloatMonitorParams{
+            hProcess,
+            processId,
+            ptyTarget,
+            startAddress,
+            endAddress,
+            intervalMs,
+            stride
+        });
+
         g_isFloatMonitoring = true;
-        
-        // Pass all required parameters matching the worker signature correctly
-        g_floatMonitorThread = std::thread(FloatMonitorWorker, hProcess, processId, pipeName, startAddress, endAddress, intervalMs, stride);
+        g_hFloatMonitorThread = CreateThread(nullptr, 0, FloatMonitorThreadProc, params.get(), 0, nullptr);
+
+        if (g_hFloatMonitorThread == NULL) {
+            g_isFloatMonitoring = false;
+            std::cerr << "[-] Failed to start float monitor thread. Error: " << GetLastError() << "\n";
+            return false;
+        }
+
+        // Thread now owns the params pointer
+        params.release();
         return true;
     } //\ StartFloatMonitor
 
@@ -972,10 +995,15 @@ void FloatMonitorWorker(HANDLE hProcess, DWORD processId, std::string pipeName, 
         }
 
         g_isFloatMonitoring = false;
-        if (g_floatMonitorThread.joinable()) {
-            g_floatMonitorThread.join();
+
+        if (g_hFloatMonitorThread != NULL) {
+            WaitForSingleObject(g_hFloatMonitorThread, 2000);
+            CloseHandle(g_hFloatMonitorThread);
+            g_hFloatMonitorThread = NULL;
         }
+
         std::cout << "\n[+] Float monitor successfully stopped.\n";
     } //\ StopFloatMonitor
+
 
 } //\ ProcessHelper

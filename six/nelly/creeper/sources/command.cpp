@@ -190,32 +190,46 @@ int CommandHandler::StartInteractiveShell(DWORD targetPid) {
         else if (cmd == "stopmonitor") {
             ProcessHelper::StopMonitor();
         }
-        else if (cmd == "floats") {
-            // Ensure at least pipe name, start address, and end address are provided
-            if (args.size() < 3) {
-                std::cout << "[!] Usage: monitorfloats <pipe_name> <start_address> <end_address> [interval_ms] [stride]\n"
-                          << "    Example: monitorfloats floats_alpha 0x140000000 0x140001000 500 4\n";
+        else if (cmd == "floats" || cmd == "monitorfloats") {
+            std::string ptyTarget;
+            std::string startHex, endHex;
+            int intervalMs = 100;
+            SIZE_T stride = sizeof(float);
+
+            if (!(ss >> ptyTarget >> startHex >> endHex)) {
+                std::cout << "[-] Usage: floats <pty_num|/dev/ptyN> <start_hex> <end_hex> [interval_ms] [stride]\n";
+                std::cout << "    Example: floats /dev/pty3 0x22e3002a6d0 0x22e3002a900 100 4\n";
+                std::cout << "    Example: floats 3 0x22e3002a6d0 0x22e3002a900 100 4\n";
                 continue;
             }
 
-            if (!hProcess || hProcess == INVALID_HANDLE_VALUE || targetPid == 0) {
-                std::cout << "[-] Error: No active process attached. Attach to a process first.\n";
+            if (ss >> intervalMs) {
+                if (intervalMs < 10) intervalMs = 10;
+            }
+            if (ss >> stride) {
+                if (stride == 0) stride = sizeof(float);
+            }
+
+            if (ptyTarget.find("/dev/") != 0) {
+                ptyTarget = "/dev/pty" + ptyTarget;
+            }
+
+            uintptr_t startAddr = 0;
+            uintptr_t endAddr = 0;
+            try {
+                startAddr = std::stoull(startHex, nullptr, 16);
+                endAddr = std::stoull(endHex, nullptr, 16);
+            } catch (const std::exception&) {
+                std::cout << "[-] Invalid hex address format.\n";
                 continue;
             }
 
-            // 1. Extract pipe name from the first argument
-            std::string pipeName = args[0];
+            if (endAddr <= startAddr) {
+                std::cout << "[-] End address must be greater than start address.\n";
+                continue;
+            }
 
-            // 2. Parse memory range boundaries (hex format)
-            uintptr_t startAddr = std::stoull(args[1], nullptr, 16);
-            uintptr_t endAddr = std::stoull(args[2], nullptr, 16);
-
-            // 3. Optional interval and stride with sensible defaults
-            int intervalMs = (args.size() > 3) ? std::stoi(args[3]) : 1000;
-            SIZE_T stride = (args.size() > 4) ? std::stoull(args[4]) : sizeof(float);
-
-            // 4. Invoke the float monitor helper using correct local handles
-            ProcessHelper::StartFloatMonitor(hProcess, targetPid, pipeName, startAddr, endAddr, intervalMs, stride);
+            ProcessHelper::StartFloatMonitor(hProcess, targetPid, ptyTarget, startAddr, endAddr, intervalMs, stride);
         }
         else if (cmd == "stopfloats") {
             ProcessHelper::StopFloatMonitor();
