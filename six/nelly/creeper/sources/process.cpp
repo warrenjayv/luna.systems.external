@@ -1154,5 +1154,266 @@ void FloatMonitorWorker(HANDLE hProcess, DWORD processId, std::string ptyTarget,
             g_hFloatFilterThread = NULL;
         }
     } //\ StopFloatFilter
+    
+    struct FloatScanMatch {
+        uintptr_t address;
+        float value;
+    }; //\ FloatScanMatch
+
+    struct FloatScanParams {
+        HANDLE hProcess;
+        DWORD processId;
+        float minVal;
+        float maxVal;
+        std::string outFile;
+        SIZE_T stride;
+    };
+
+    std::atomic<bool> g_isFloatScanning{false};
+    HANDLE g_hFloatScanThread = NULL;
+
+    void FloatScanWorker(HANDLE hProcess, DWORD processId, float minVal, float maxVal, std::string outFile, SIZE_T stride) {
+        const uintptr_t kMinUserAddr = 0x000000000000ULL;
+        const uintptr_t kMaxUserAddr = 0x7FFFFFFFFFFFULL;
+
+        if (stride == 0) stride = sizeof(float);
+        if (minVal > maxVal) std::swap(minVal, maxVal);
+
+        std::cout << "\n[*] Starting 3-Pass Float Scan on PID " << processId
+                  << " for range [" << minVal << ", " << maxVal << "] (1-second delay between passes)...\n" << std::flush;
+
+        struct ScanCandidate {
+            uintptr_t address;
+            float firstVal;
+            float lastVal;
+            bool changed;
+        };
+
+        std::vector<ScanCandidate> candidates;
+        candidates.reserve(8192);
+
+        // =====================================================================
+        // PASS 1: Full user-space memory scan
+        // =====================================================================
+        std::cout << "[*] Pass 1/3: Scanning full virtual address space [0x0 -> 0x7FFFFFFFFFFF]...\n" << std::flush;
+
+        uintptr_t currentAddr = kMinUserAddr;
+        MEMORY_BASIC_INFORMATION mbi{};
+        SIZE_T regionsScanned = 0;
+        SIZE_T bytesScanned = 0;
+
+        const SIZE_T kMaxChunkSize = 4 * 1024 * 1024; // 4 MB chunks
+        std::vector<unsigned char> buffer(kMaxChunkSize);
+
+        while (g_isFloatScanning && currentAddr < kMaxUserAddr) {
+            if (VirtualQueryEx(hProcess, reinterpret_cast<LPCVOID>(currentAddr), &mbi, sizeof(mbi)) != sizeof(mbi)) {
+                break;
+            }
+
+            uintptr_t regionBase = reinterpret_cast<uintptr_t>(mbi.BaseAddress);
+            SIZE_T regionSize = mbi.RegionSize;
+            uintptr_t regionEnd = regionBase + regionSize;
+
+            if (regionEnd <= regionBase || regionEnd > kMaxUserAddr) {
+                regionEnd = kMaxUserAddr;
+            }
+
+            bool isReadable = (mbi.State == MEM_COMMIT) &&
+                              !(mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD)) &&
+                              (mbi.Protect & (PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY |
+                                              PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY));
+
+            if (isReadable && regionEnd > regionBase) {
+                regionsScanned++;
+                uintptr_t chunkAddr = regionBase;
+
+                while (g_isFloatScanning && chunkAddr < regionEnd) {
+                    SIZE_T toRead = static_cast<SIZE_T>(regionEnd - chunkAddr);
+                    if (toRead > kMaxChunkSize) toRead = kMaxChunkSize;
+
+                    SIZE_T bytesRead = 0;
+                    if (ReadProcessMemory(hProcess, reinterpret_cast<LPCVOID>(chunkAddr), buffer.data(), toRead, &bytesRead) && bytesRead >= sizeof(float)) {
+                        bytesScanned += bytesRead;
+
+                        for (SIZE_T offset = 0; offset + sizeof(float) <= bytesRead; offset += stride) {
+                            float val = *reinterpret_cast<const float*>(buffer.data() + offset);
+                            if (std::isfinite(val) && val >= minVal && val <= maxVal) {
+                                candidates.push_back(ScanCandidate{ chunkAddr + offset, val, val, false });
+                            }
+                        }
+                    }
+                    chunkAddr += toRead;
+                }
+            }
+
+            if (regionEnd >= kMaxUserAddr) break;
+            currentAddr = regionEnd;
+        }
+
+        if (!g_isFloatScanning) {
+            std::cout << "[-] Scan aborted during Pass 1.\n";
+            return;
+        }
+
+        std::cout << "[+] Pass 1 complete: Found " << candidates.size() << " initial candidates.\n" << std::flush;
+
+        // =====================================================================
+        // PASS 2: First targeted re-read (1 second delay)
+        // =====================================================================
+        if (!candidates.empty() && g_isFloatScanning) {
+            std::cout << "[*] Pass 2/3: Waiting 1 second before re-evaluating candidates...\n" << std::flush;
+            Sleep(1000); // 1 full second
+
+            for (auto& c : candidates) {
+                if (!g_isFloatScanning) break;
+                float val = 0.0f;
+                SIZE_T bytesRead = 0;
+                if (ReadProcessMemory(hProcess, reinterpret_cast<LPCVOID>(c.address), &val, sizeof(float), &bytesRead) && bytesRead == sizeof(float)) {
+                    if (std::isfinite(val)) {
+                        if (val != c.lastVal) {
+                            c.changed = true;
+                        }
+                        c.lastVal = val;
+                    } else {
+                        c.lastVal = NAN;
+                    }
+                } else {
+                    c.lastVal = NAN;
+                }
+            }
+        }
+
+        // =====================================================================
+        // PASS 3: Final validation re-read (1 second delay)
+        // =====================================================================
+        if (!candidates.empty() && g_isFloatScanning) {
+            std::cout << "[*] Pass 3/3: Waiting 1 second for final validation pass...\n" << std::flush;
+            Sleep(1000); // 1 full second
+
+            for (auto& c : candidates) {
+                if (!g_isFloatScanning) break;
+                float val = 0.0f;
+                SIZE_T bytesRead = 0;
+                if (ReadProcessMemory(hProcess, reinterpret_cast<LPCVOID>(c.address), &val, sizeof(float), &bytesRead) && bytesRead == sizeof(float)) {
+                    if (std::isfinite(val)) {
+                        if (val != c.lastVal) {
+                            c.changed = true;
+                        }
+                        c.lastVal = val;
+                    } else {
+                        c.lastVal = NAN;
+                    }
+                } else {
+                    c.lastVal = NAN;
+                }
+            }
+        }
+
+        if (!g_isFloatScanning) {
+            std::cout << "[-] Scan aborted.\n";
+            return;
+        }
+
+        // Filter out everything that didn't mutate across the 3 passes
+        std::vector<FloatScanMatch> finalMatches;
+        finalMatches.reserve(candidates.size());
+
+        for (const auto& c : candidates) {
+            if (!std::isfinite(c.lastVal)) continue;
+
+            if (c.changed || c.lastVal != c.firstVal) {
+                finalMatches.push_back(FloatScanMatch{ c.address, c.lastVal });
+            }
+        }
+
+        std::cout << "\n[+] 3-Pass Scan complete! Scanned " << regionsScanned << " regions ("
+                  << (bytesScanned / (1024 * 1024)) << " MB). Dynamic matches retained: " 
+                  << finalMatches.size() << " (discarded " << (candidates.size() - finalMatches.size()) << " static values).\n";
+
+        // =====================================================================
+        // Export Results to dump/
+        // =====================================================================
+        CreateDirectoryA("dump", nullptr);
+
+        std::string targetFile = outFile.empty()
+            ? ("scan_" + std::to_string(processId) + ".txt")
+            : outFile;
+
+        if (targetFile.find("dump/") != 0 && targetFile.find("dump\\") != 0) {
+            targetFile = "dump/" + targetFile;
+        }
+
+        std::ofstream ofs(targetFile, std::ios::out | std::ios::trunc);
+        if (ofs.is_open()) {
+            ofs << "[+] 3-Pass Float Scan Results (PID: " << processId 
+                << " | Range: [" << minVal << ", " << maxVal << "] | Dynamic Matches: " << finalMatches.size() << ")\n";
+            ofs << "--------------------------------------------------\n";
+            for (const auto& m : finalMatches) {
+                ofs << "0x" << std::hex << std::setw(12) << std::setfill('0') << m.address
+                    << std::dec << std::setfill(' ') << "  "
+                    << std::fixed << std::setprecision(6) << m.value << "\n";
+            }
+            ofs.close();
+            std::cout << "[+] Saved all " << finalMatches.size() << " dynamic results to '" << targetFile << "'.\n";
+        } else {
+            std::cerr << "[-] Failed to open output file '" << targetFile << "'.\n";
+        }
+
+        std::cout << std::flush;
+        g_isFloatScanning = false;
+    } //\ FloatScanWorker
+
+    DWORD WINAPI FloatScanThreadProc(LPVOID lpParam) {
+        FloatScanParams* params = static_cast<FloatScanParams*>(lpParam);
+        if (params) {
+            FloatScanWorker(
+                params->hProcess,
+                params->processId,
+                params->minVal,
+                params->maxVal,
+                params->outFile,
+                params->stride
+            );
+            delete params;
+        }
+        return 0;
+    } //\ FloatScanThreadProc
+
+    bool StartFloatScan(HANDLE hProcess, DWORD processId, float minVal, float maxVal, const std::string& outFile, SIZE_T stride) {
+        if (g_isFloatScanning) {
+            std::cout << "[-] A float scan is already running. Type 'stopscan' to abort it.\n";
+            return false;
+        }
+
+        if (stride == 0) stride = sizeof(float);
+        auto* params = new FloatScanParams{hProcess, processId, minVal, maxVal, outFile, stride};
+
+        g_isFloatScanning = true;
+        g_hFloatScanThread = CreateThread(nullptr, 0, FloatScanThreadProc, params, 0, nullptr);
+        if (!g_hFloatScanThread) {
+            g_isFloatScanning = false;
+            delete params;
+            std::cerr << "[-] Failed to spawn FloatScan thread. Error: " << GetLastError() << "\n";
+            return false;
+        }
+
+        // Detach handle lifecycle since scan self-terminates upon completion
+        CloseHandle(g_hFloatScanThread);
+        g_hFloatScanThread = NULL;
+        return true;
+    } //\ StartFloatScan
+
+    void StopFloatScan() {
+        if (!g_isFloatScanning) {
+            std::cout << "[-] No active float scan running.\n";
+            return;
+        }
+        g_isFloatScanning = false;
+        std::cout << "[*] Aborting active float scan...\n";
+    } //\ StopFloatScan
+
+
+
+
 
 } //\ ProcessHelper

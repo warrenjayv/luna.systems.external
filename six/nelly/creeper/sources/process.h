@@ -21,4 +21,6 @@ namespace ProcessHelper {
     void StopFloatFilter();
     void StopFloatMonitor();
     bool StartCustomPipe(const std::string& pipeName);
+    bool StartFloatScan(HANDLE hProcess, DWORD processId, float minVal, float maxVal, const std::string& outFile = "", SIZE_T stride = sizeof(float));
+    void StopFloatScan();
 }

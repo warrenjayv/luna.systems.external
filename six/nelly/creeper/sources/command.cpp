@@ -21,6 +21,7 @@ void CommandHandler::PrintUsage(const char* /*programName*/) {
               << " filter <pty target> <start_address> <end_address> [interval_ms] [stride] \n      - Filter a memory range for float values and log to file\n"
               << " stopfloats                                         - Stop the float range monitor\n"
               << " stopfilter                                         - Stop the float filter\n"
+              << " scanfloat <min_float> <max_float> [output_file] [stride] \n       - Scan entire user-space memory for floats in range\n"
               << " pid <NewPID>                                       - Switch to a different target PID\n"
               << " memmap [Filename]                                  - Print memory map of the target process and optionally save to file\n"
               << " exit                                               - Close handle and exit session\n\n";
@@ -315,6 +316,35 @@ else if (cmd == "floats" || cmd == "monitorfloats") {
                 }
                 std::string pipeName = args[0];
                 ProcessHelper::StartCustomPipe(pipeName);
+        }
+        else if (cmd == "scanfloat") {
+            if (args.size() < 2) {
+                std::cout << "[-] Usage: scanfloat <min_float> <max_float> [output_file] [stride]\n";
+                std::cout << "    Example: scanfloat 99.5 100.5\n";
+                std::cout << "    Example: scanfloat -500.0 500.0 scan_results.csv 4\n";
+                continue;
+            }
+
+            float minVal = 0.0f;
+            float maxVal = 0.0f;
+            std::string outFile = (args.size() >= 3) ? args[2] : "";
+            SIZE_T stride = sizeof(float);
+
+            try {
+                minVal = std::stof(args[0]);
+                maxVal = std::stof(args[1]);
+                if (args.size() >= 4) {
+                    stride = static_cast<SIZE_T>(std::stoull(args[3]));
+                }
+            } catch (const std::exception&) {
+                std::cout << "[-] Invalid numeric argument format.\n";
+                continue;
+            }
+
+            ProcessHelper::StartFloatScan(hProcess, targetPid, minVal, maxVal, outFile, stride);
+        }
+        else if (cmd == "stopscan") {
+            ProcessHelper::StopFloatScan();
         }
         else {
             std::cout << "[-] Unknown command: " << cmd << ". Type 'help' for options.\n";
