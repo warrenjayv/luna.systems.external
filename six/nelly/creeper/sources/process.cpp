@@ -1,4 +1,6 @@
 #include "process.h"
+#include "resolver.h"
+
 #include <windows.h>
 #include <winternl.h>
 #include <iostream>
@@ -83,6 +85,8 @@ static std::atomic<bool> g_isFloatMonitoring(false);
 static std::thread g_floatMonitorThread;
 static std::mutex g_pipeMutex;
 static HANDLE g_hFloatMonitorThread = NULL;
+static std::atomic<bool> g_isFloatFiltering{false};
+static HANDLE g_hFloatFilterThread = NULL;
 
 struct ActivePipe {
     HANDLE hPipe = INVALID_HANDLE_VALUE;
@@ -1006,5 +1010,149 @@ void FloatMonitorWorker(HANDLE hProcess, DWORD processId, std::string ptyTarget,
         std::cout << "\n[+] Float monitor successfully stopped.\n";
     } //\ StopFloatMonitor
 
+    struct FloatWorkerParams {
+        HANDLE hProcess;
+        DWORD processId;
+        std::string ptyTarget;
+        uintptr_t startAddress;
+        uintptr_t endAddress;
+        int intervalMs;
+        SIZE_T stride;
+    }; //\ FloatWorkerParams
+
+    void FloatFilterWorker(HANDLE hProcess, DWORD processId, std::string ptyTarget, uintptr_t startAddress, uintptr_t endAddress, int intervalMs, SIZE_T stride) {
+        std::string ptyPath = ptyTarget;
+        if (ptyPath.find("/dev/") != 0) {
+            ptyPath = "/dev/pty" + ptyTarget;
+        }
+
+        std::string shellCmd = "sh -c \"cat > " + ptyPath + "\"";
+        FILE* ptyOut = _popen(shellCmd.c_str(), "wb");
+        if (!ptyOut) {
+            std::cerr << "[-] Failed to open shell stream to '" << ptyPath << "'.\n";
+            g_isFloatFiltering = false;
+            return;
+        }
+
+        ResolverConfig cfg;
+        cfg.minStepDelta      = 0.001f;
+        cfg.maxStepDelta      = 250.0f;
+        cfg.maxRadius         = 5000.0f;
+        cfg.maxStaticTicks    = 20;
+        cfg.maxHistorySamples = 0;
+
+        Resolver resolver;
+        resolver.Start(startAddress, endAddress, stride, cfg);
+
+        SIZE_T totalBytes = endAddress - startAddress;
+
+        std::cout << "\n[+] Float Filter streaming directly to '" << ptyPath 
+                  << "' (0x" << std::hex << startAddress << " -> 0x" << endAddress << std::dec << ").\n" << std::flush;
+
+        while (g_isFloatFiltering) {
+            std::vector<unsigned char> buffer(totalBytes, 0);
+            SIZE_T bytesRead = 0;
+
+            MEMORY_BASIC_INFORMATION mbi;
+            bool pageValid = false;
+            if (VirtualQueryEx(hProcess, (LPCVOID)startAddress, &mbi, sizeof(mbi)) == sizeof(mbi)) {
+                if (mbi.State == MEM_COMMIT && !(mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD))) {
+                    pageValid = true;
+                }
+            }
+
+            if (pageValid && ReadProcessMemory(hProcess, (LPCVOID)startAddress, buffer.data(), totalBytes, &bytesRead)) {
+                resolver.PushSample(startAddress, buffer, bytesRead);
+            }
+
+            auto survivors = resolver.GetSurvivingCandidates();
+
+            std::ostringstream oss;
+            oss << "\033[2J\033[H";
+            oss << "[+] Float Filter -> " << ptyPath << " (PID: " << processId 
+                << " | Surviving: " << survivors.size() 
+                << " | Ticks: " << resolver.GetTotalProcessedSamples() << "):\n";
+            oss << "----------------------------------------------------------------------------\n";
+            oss << std::left << std::setw(18) << "Address" 
+                << " | " << std::setw(14) << "Current" 
+                << " | " << std::setw(14) << "DeltaOrigin"
+                << " | " << std::setw(14) << "PathDist\n";
+            oss << "----------------------------------------------------------------------------\n";
+
+            for (const auto& item : survivors) {
+                float deltaOrigin = std::fabs(item.lastValue - item.initialValue);
+                oss << "  0x" << std::hex << std::setw(12) << std::setfill('0') << item.address 
+                    << std::dec << std::setfill(' ') << " | "
+                    << std::setw(14) << std::fixed << std::setprecision(4) << item.lastValue << " | "
+                    << std::setw(14) << std::fixed << std::setprecision(4) << deltaOrigin << " | "
+                    << std::setw(14) << std::fixed << std::setprecision(4) << item.totalDistance << "\n";
+            }
+            oss << "----------------------------------------------------------------------------\n";
+
+            std::string outStr = oss.str();
+            if (fwrite(outStr.data(), 1, outStr.size(), ptyOut) == 0 || fflush(ptyOut) != 0) {
+                std::cerr << "\n[-] Lost connection to '" << ptyPath << "' (terminal closed).\n";
+                break;
+            }
+
+            Sleep(intervalMs);
+        }
+
+        resolver.Stop();
+        _pclose(ptyOut);
+        g_isFloatFiltering = false;
+        std::cout << "\n[+] Float filter on '" << ptyPath << "' stopped.\n" << std::flush;
+    } //\ FloatFilterWorker
+
+    DWORD WINAPI FloatFilterThreadProc(LPVOID lpParam) {
+        FloatWorkerParams* params = static_cast<FloatWorkerParams*>(lpParam);
+        if (params) {
+            FloatFilterWorker(
+                params->hProcess,
+                params->processId,
+                params->ptyTarget,
+                params->startAddress,
+                params->endAddress,
+                params->intervalMs,
+                params->stride
+            );
+            delete params;
+        }
+        return 0;
+    } //\ FloatFilterThreadProc
+
+    bool StartFloatFilter(HANDLE hProcess, DWORD processId, const std::string& ptyTarget, uintptr_t startAddress, uintptr_t endAddress, int intervalMs, SIZE_T stride) {
+        if (g_isFloatFiltering) {
+            std::cout << "[-] Float filter is already running. Type 'stopfilter' first.\n";
+            return false;
+        }
+
+        if (stride == 0) stride = sizeof(float);
+        auto* params = new FloatWorkerParams{hProcess, processId, ptyTarget, startAddress, endAddress, intervalMs, stride};
+
+        g_isFloatFiltering = true;
+        g_hFloatFilterThread = CreateThread(nullptr, 0, FloatFilterThreadProc, params, 0, nullptr);
+        if (!g_hFloatFilterThread) {
+            g_isFloatFiltering = false;
+            delete params;
+            std::cerr << "[-] Failed to spawn FloatFilter thread. Error: " << GetLastError() << "\n";
+            return false;
+        }
+        return true;
+    } //\ StartFloatFilter
+
+    void StopFloatFilter() {
+        if (!g_isFloatFiltering) {
+            std::cout << "[-] No active float filter running.\n";
+            return;
+        }
+
+        g_isFloatFiltering = false;
+        if (g_hFloatFilterThread) {
+            WaitForSingleObject(g_hFloatFilterThread, 2000);
+            CloseHandle(g_hFloatFilterThread);
+            g_hFloatFilterThread = NULL;
+        }
+    } //\ StopFloatFilter
 
 } //\ ProcessHelper
