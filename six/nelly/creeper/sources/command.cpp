@@ -8,7 +8,7 @@
 
 void CommandHandler::PrintUsage(const char* /*programName*/) {
     std::cout << "\n[+] Available Interactive Commands:\n"
-              << " pipe <pipe_name>                                      - Create a custom named pipe for data streaming\n"
+              << " pipe <pipe_name>                                   - Create a custom named pipe for data streaming\n"
               << " getbase                                            - Get remote process base address\n"
               << " modules                                            - List all loaded modules and base addresses\n" 
               << " readaddr <HexAddress> [Size]                       - Read specific memory address\n"
@@ -17,7 +17,7 @@ void CommandHandler::PrintUsage(const char* /*programName*/) {
               << " heaps                                              - List all heaps in the target process\n" 
               << " monitor pty<n>                                     - Stream floating registers live to PTY target (e.g. monitor pty1)\n"
               << " stopmonitor                                        - Stop the floating register monitor\n"
-              << " floats <pipe_name> <start_address> <end_address> [interval_ms] [stride] \n   - Monitor a memory range for float values and log to file\n"
+              << " floats <pty target> <start_address> <end_address> [interval_ms] [stride] \n   - Monitor a memory range for float values and log to file\n"
               << " stopfloats                                         - Stop the float range monitor\n"
               << " pid <NewPID>                                       - Switch to a different target PID\n"
               << " memmap [Filename]                                  - Print memory map of the target process and optionally save to file\n"
@@ -190,24 +190,38 @@ int CommandHandler::StartInteractiveShell(DWORD targetPid) {
         else if (cmd == "stopmonitor") {
             ProcessHelper::StopMonitor();
         }
-        else if (cmd == "floats" || cmd == "monitorfloats") {
-            std::string ptyTarget;
-            std::string startHex, endHex;
-            int intervalMs = 100;
-            SIZE_T stride = sizeof(float);
-
-            if (!(ss >> ptyTarget >> startHex >> endHex)) {
+else if (cmd == "floats" || cmd == "monitorfloats") {
+            if (args.size() < 3) {
                 std::cout << "[-] Usage: floats <pty_num|/dev/ptyN> <start_hex> <end_hex> [interval_ms] [stride]\n";
                 std::cout << "    Example: floats /dev/pty3 0x22e3002a6d0 0x22e3002a900 100 4\n";
                 std::cout << "    Example: floats 3 0x22e3002a6d0 0x22e3002a900 100 4\n";
                 continue;
             }
 
-            if (ss >> intervalMs) {
-                if (intervalMs < 10) intervalMs = 10;
+            std::string ptyTarget = args[0];
+            std::string startHex = args[1];
+            std::string endHex = args[2];
+            int intervalMs = 100;
+            SIZE_T stride = sizeof(float);
+
+            if (args.size() >= 4) {
+                try {
+                    intervalMs = std::stoi(args[3]);
+                    if (intervalMs < 10) intervalMs = 10;
+                } catch (const std::exception&) {
+                    std::cout << "[-] Invalid interval_ms format.\n";
+                    continue;
+                }
             }
-            if (ss >> stride) {
-                if (stride == 0) stride = sizeof(float);
+
+            if (args.size() >= 5) {
+                try {
+                    stride = static_cast<SIZE_T>(std::stoull(args[4]));
+                    if (stride == 0) stride = sizeof(float);
+                } catch (const std::exception&) {
+                    std::cout << "[-] Invalid stride format.\n";
+                    continue;
+                }
             }
 
             if (ptyTarget.find("/dev/") != 0) {

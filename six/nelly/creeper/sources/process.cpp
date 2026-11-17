@@ -852,16 +852,17 @@ bool ReadMemoryRangeFloats(HANDLE hProcess, uintptr_t address, int count, const 
 
 
 
-    void FloatMonitorWorker(HANDLE hProcess, DWORD processId, std::string ptyTarget, uintptr_t startAddress, uintptr_t endAddress, int intervalMs, SIZE_T stride) {
-        // Allow passing either "/dev/pty3" or just "3"
+void FloatMonitorWorker(HANDLE hProcess, DWORD processId, std::string ptyTarget, uintptr_t startAddress, uintptr_t endAddress, int intervalMs, SIZE_T stride) {
         std::string ptyPath = ptyTarget;
         if (ptyPath.find("/dev/") != 0) {
             ptyPath = "/dev/pty" + ptyTarget;
         }
 
-        FILE* ptyOut = fopen(ptyPath.c_str(), "w");
+        // Open a persistent stream to MSYS2's sh redirecting directly into /dev/ptyN
+        std::string shellCmd = "sh -c \"cat > " + ptyPath + "\"";
+        FILE* ptyOut = _popen(shellCmd.c_str(), "wb");
         if (!ptyOut) {
-            std::cerr << "[-] Failed to open target terminal '" << ptyPath << "'. Check 'tty' in your target pane.\n";
+            std::cerr << "[-] Failed to open shell stream to '" << ptyPath << "'.\n";
             g_isFloatMonitoring = false;
             return;
         }
@@ -870,7 +871,7 @@ bool ReadMemoryRangeFloats(HANDLE hProcess, uintptr_t address, int count, const 
         int count = totalBytes / stride;
         if (count <= 0) count = 1;
 
-        std::cout << "\n[+] Float Monitor streaming directly to '" << ptyPath 
+        std::cout << "\n[+] Float Monitor streaming via shell to '" << ptyPath 
                   << "' (0x" << std::hex << startAddress << " -> 0x" << endAddress << std::dec << ").\n" << std::flush;
 
         while (g_isFloatMonitoring) {
@@ -921,15 +922,15 @@ bool ReadMemoryRangeFloats(HANDLE hProcess, uintptr_t address, int count, const 
             oss << "------------------------------------------------------------------\n";
 
             std::string outStr = oss.str();
-            if (fwrite(outStr.data(), 1, outStr.size(), ptyOut) == 0 || fflush(ptyOut) != 0) {
-                std::cerr << "\n[-] Lost connection to '" << ptyPath << "' (terminal closed).\n";
+            if (fwrite(outStr.data(), 1, outStr.size(), ptyOut) != outStr.size() || fflush(ptyOut) != 0) {
+                std::cerr << "\n[-] Lost connection to '" << ptyPath << "' (target pane closed or invalid).\n" << std::flush;
                 break;
             }
 
             Sleep(intervalMs);
         }
 
-        fclose(ptyOut);
+        _pclose(ptyOut);
         g_isFloatMonitoring = false;
         std::cout << "\n[+] Float monitor on '" << ptyPath << "' stopped.\n" << std::flush;
     } //\ FloatMonitorWorker
