@@ -856,13 +856,12 @@ bool ReadMemoryRangeFloats(HANDLE hProcess, uintptr_t address, int count, const 
 
 
 
-void FloatMonitorWorker(HANDLE hProcess, DWORD processId, std::string ptyTarget, uintptr_t startAddress, uintptr_t endAddress, int intervalMs, SIZE_T stride) {
+    void FloatMonitorWorker(HANDLE hProcess, DWORD processId, std::string ptyTarget, uintptr_t startAddress, uintptr_t endAddress, int intervalMs, SIZE_T stride) {
         std::string ptyPath = ptyTarget;
         if (ptyPath.find("/dev/") != 0) {
             ptyPath = "/dev/pty" + ptyTarget;
         }
 
-        // Open a persistent stream to MSYS2's sh redirecting directly into /dev/ptyN
         std::string shellCmd = "sh -c \"cat > " + ptyPath + "\"";
         FILE* ptyOut = _popen(shellCmd.c_str(), "wb");
         if (!ptyOut) {
@@ -872,10 +871,20 @@ void FloatMonitorWorker(HANDLE hProcess, DWORD processId, std::string ptyTarget,
         }
 
         SIZE_T totalBytes = endAddress - startAddress;
-        int count = totalBytes / stride;
+        int count = static_cast<int>(totalBytes / stride);
         if (count <= 0) count = 1;
 
-        std::cout << "\n[+] Float Monitor streaming via shell to '" << ptyPath 
+        // Dynamically choose 1, 2, or 3 side-by-side columns based on item count
+        int numCols = 1;
+        if (count > 60) {
+            numCols = 3;
+        } else if (count > 25) {
+            numCols = 2;
+        }
+
+        int numRows = (count + numCols - 1) / numCols;
+
+        std::cout << "\n[+] Float Monitor streaming (" << numCols << "-col layout) to '" << ptyPath 
                   << "' (0x" << std::hex << startAddress << " -> 0x" << endAddress << std::dec << ").\n" << std::flush;
 
         while (g_isFloatMonitoring) {
@@ -890,44 +899,63 @@ void FloatMonitorWorker(HANDLE hProcess, DWORD processId, std::string ptyTarget,
                 }
             }
 
+            bool readOk = pageValid && ReadProcessMemory(hProcess, (LPCVOID)startAddress, buffer.data(), totalBytes, &bytesRead);
+
+            // Helper lambda to format a single cell cleanly to a fixed width (29 chars)
+            auto formatCell = [&](int idx) -> std::string {
+                if (idx >= count) {
+                    return std::string(29, ' ');
+                }
+
+                uintptr_t currentAddr = startAddress + (idx * stride);
+                size_t offset = idx * stride;
+
+                std::ostringstream cell;
+                cell << "0x" << std::hex << std::setw(12) << std::setfill('0') << currentAddr
+                     << std::dec << std::setfill(' ') << " | ";
+
+                if (readOk && offset + sizeof(float) <= bytesRead) {
+                    float fVal = *reinterpret_cast<float*>(buffer.data() + offset);
+                    cell << std::setw(13) << std::fixed << std::setprecision(4) << fVal;
+                } else {
+                    cell << std::setw(13) << "--------";
+                }
+                return cell.str();
+            };
+
+            std::string divider(numCols * 33 - 4, '-');
+
             std::ostringstream oss;
             oss << "\033[2J\033[H";
             oss << "[+] Float Monitor -> " << ptyPath << " (PID: " << processId 
-                << " | 0x" << std::hex << startAddress << " - 0x" << endAddress << std::dec << "):\n";
-            oss << "------------------------------------------------------------------\n";
-            oss << std::left << std::setw(18) << "Address" 
-                << " | " << std::setw(15) << "Float (32-bit)" 
-                << " | Status\n";
-            oss << "------------------------------------------------------------------\n";
+                << " | 0x" << std::hex << startAddress << " - 0x" << endAddress << std::dec 
+                << " | Items: " << count << " | Cols: " << numCols << ")\n";
+            oss << divider << "\n";
 
-            if (pageValid && ReadProcessMemory(hProcess, (LPCVOID)startAddress, buffer.data(), totalBytes, &bytesRead)) {
-                for (int i = 0; i < count; i++) {
-                    uintptr_t currentAddr = startAddress + (i * stride);
-                    size_t offset = i * stride;
+            // Header row
+            for (int c = 0; c < numCols; ++c) {
+                oss << std::left << std::setw(14) << "Address"
+                    << " | " << std::setw(13) << "Float";
+                if (c < numCols - 1) oss << " || ";
+            }
+            oss << "\n" << divider << "\n";
 
-                    oss << "  0x" << std::hex << std::setw(12) << std::setfill('0') << currentAddr 
-                        << std::dec << std::setfill(' ') << " | ";
-
-                    if (offset + sizeof(float) <= bytesRead) {
-                        float fVal = *reinterpret_cast<float*>(buffer.data() + offset);
-                        oss << std::setw(15) << std::fixed << std::setprecision(4) << fVal << " | OK\n";
-                    } else {
-                        oss << std::setw(15) << "--------" << " | Out of bounds\n";
+            // Render rows in column-major order
+            for (int r = 0; r < numRows; ++r) {
+                for (int c = 0; c < numCols; ++c) {
+                    int idx = c * numRows + r;
+                    oss << formatCell(idx);
+                    if (c < numCols - 1) {
+                        oss << " || ";
                     }
                 }
-            } else {
-                for (int i = 0; i < count; i++) {
-                    uintptr_t currentAddr = startAddress + (i * stride);
-                    oss << "  0x" << std::hex << std::setw(12) << std::setfill('0') << currentAddr 
-                        << std::dec << std::setfill(' ') << " | "
-                        << std::setw(15) << "--------" << " | Unaccessible / Unmapped\n";
-                }
+                oss << "\n";
             }
-            oss << "------------------------------------------------------------------\n";
+            oss << divider << "\n";
 
             std::string outStr = oss.str();
-            if (fwrite(outStr.data(), 1, outStr.size(), ptyOut) != outStr.size() || fflush(ptyOut) != 0) {
-                std::cerr << "\n[-] Lost connection to '" << ptyPath << "' (target pane closed or invalid).\n" << std::flush;
+            if (fwrite(outStr.data(), 1, outStr.size(), ptyOut) == 0 || fflush(ptyOut) != 0) {
+                std::cerr << "\n[-] Lost connection to '" << ptyPath << "' (terminal closed).\n";
                 break;
             }
 
@@ -1066,28 +1094,74 @@ void FloatMonitorWorker(HANDLE hProcess, DWORD processId, std::string ptyTarget,
             }
 
             auto survivors = resolver.GetSurvivingCandidates();
+            int count = static_cast<int>(survivors.size());
+
+            // Dynamically adjust columns (1, 2, or 3) as candidates get pruned over time
+            int numCols = 1;
+            if (count > 60) {
+                numCols = 3;
+            } else if (count > 25) {
+                numCols = 2;
+            }
+
+            int numRows = (count > 0) ? ((count + numCols - 1) / numCols) : 0;
+
+            // Each cell is exactly 56 chars wide:
+            // "0x01ff3002a6d0 |      104.2500 |     12.5000 |   45.0000"
+            const int kCellWidth = 56;
+            auto formatCell = [&](int idx) -> std::string {
+                if (idx >= count) {
+                    return std::string(kCellWidth, ' ');
+                }
+
+                const auto& item = survivors[idx];
+                float deltaOrigin = std::fabs(item.lastValue - item.initialValue);
+
+                std::ostringstream cell;
+                cell << "0x" << std::hex << std::setw(12) << std::setfill('0') << item.address
+                     << std::dec << std::setfill(' ') << " | "
+                     << std::setw(11) << std::fixed << std::setprecision(4) << item.lastValue << " | "
+                     << std::setw(11) << std::fixed << std::setprecision(4) << deltaOrigin << " | "
+                     << std::setw(11) << std::fixed << std::setprecision(4) << item.totalDistance;
+                return cell.str();
+            };
+
+            std::string divider(numCols * (kCellWidth + 4) - 4, '-');
 
             std::ostringstream oss;
             oss << "\033[2J\033[H";
             oss << "[+] Float Filter -> " << ptyPath << " (PID: " << processId 
-                << " | Surviving: " << survivors.size() 
-                << " | Ticks: " << resolver.GetTotalProcessedSamples() << "):\n";
-            oss << "----------------------------------------------------------------------------\n";
-            oss << std::left << std::setw(18) << "Address" 
-                << " | " << std::setw(14) << "Current" 
-                << " | " << std::setw(14) << "DeltaOrigin"
-                << " | " << std::setw(14) << "PathDist\n";
-            oss << "----------------------------------------------------------------------------\n";
+                << " | Surviving: " << count 
+                << " | Ticks: " << resolver.GetTotalProcessedSamples()
+                << " | Cols: " << numCols << ")\n";
+            oss << divider << "\n";
 
-            for (const auto& item : survivors) {
-                float deltaOrigin = std::fabs(item.lastValue - item.initialValue);
-                oss << "  0x" << std::hex << std::setw(12) << std::setfill('0') << item.address 
-                    << std::dec << std::setfill(' ') << " | "
-                    << std::setw(14) << std::fixed << std::setprecision(4) << item.lastValue << " | "
-                    << std::setw(14) << std::fixed << std::setprecision(4) << deltaOrigin << " | "
-                    << std::setw(14) << std::fixed << std::setprecision(4) << item.totalDistance << "\n";
+            // Header row
+            for (int c = 0; c < numCols; ++c) {
+                oss << std::left << std::setw(14) << "Address"
+                    << " | " << std::setw(11) << "Current"
+                    << " | " << std::setw(11) << "DeltaOrigin"
+                    << " | " << std::setw(11) << "PathDist";
+                if (c < numCols - 1) oss << " || ";
             }
-            oss << "----------------------------------------------------------------------------\n";
+            oss << "\n" << divider << "\n";
+
+            if (count == 0) {
+                oss << "  (No active candidates remaining within delta-D / radius bounds)\n";
+            } else {
+                // Render rows in column-major order
+                for (int r = 0; r < numRows; ++r) {
+                    for (int c = 0; c < numCols; ++c) {
+                        int idx = c * numRows + r;
+                        oss << formatCell(idx);
+                        if (c < numCols - 1) {
+                            oss << " || ";
+                        }
+                    }
+                    oss << "\n";
+                }
+            }
+            oss << divider << "\n";
 
             std::string outStr = oss.str();
             if (fwrite(outStr.data(), 1, outStr.size(), ptyOut) == 0 || fflush(ptyOut) != 0) {
@@ -1331,7 +1405,7 @@ void FloatMonitorWorker(HANDLE hProcess, DWORD processId, std::string ptyTarget,
                   << finalMatches.size() << " (discarded " << (candidates.size() - finalMatches.size()) << " static values).\n";
 
         // =====================================================================
-        // Export Results to dump/
+        // Export Results to dump/ (Dynamic 1 to 4 Column Layout)
         // =====================================================================
         CreateDirectoryA("dump", nullptr);
 
@@ -1345,16 +1419,69 @@ void FloatMonitorWorker(HANDLE hProcess, DWORD processId, std::string ptyTarget,
 
         std::ofstream ofs(targetFile, std::ios::out | std::ios::trunc);
         if (ofs.is_open()) {
-            ofs << "[+] 3-Pass Float Scan Results (PID: " << processId 
-                << " | Range: [" << minVal << ", " << maxVal << "] | Dynamic Matches: " << finalMatches.size() << ")\n";
-            ofs << "--------------------------------------------------\n";
-            for (const auto& m : finalMatches) {
-                ofs << "0x" << std::hex << std::setw(12) << std::setfill('0') << m.address
-                    << std::dec << std::setfill(' ') << "  "
-                    << std::fixed << std::setprecision(6) << m.value << "\n";
+            int count = static_cast<int>(finalMatches.size());
+
+            // Dynamically choose 1 to 4 columns based on match count
+            int numCols = 1;
+            if (count > 120) {
+                numCols = 4;
+            } else if (count > 60) {
+                numCols = 3;
+            } else if (count > 30) {
+                numCols = 2;
             }
+
+            int numRows = (count > 0) ? ((count + numCols - 1) / numCols) : 0;
+
+            // Cell width: "0x01ff3002a6d0 |   104.250000" -> 14 + 3 + 13 = 30 chars
+            const int kCellWidth = 30;
+            auto formatCell = [&](int idx) -> std::string {
+                if (idx >= count) {
+                    return std::string(kCellWidth, ' ');
+                }
+                const auto& m = finalMatches[idx];
+                std::ostringstream cell;
+                cell << "0x" << std::hex << std::setw(12) << std::setfill('0') << m.address
+                     << std::dec << std::setfill(' ') << " | "
+                     << std::setw(13) << std::fixed << std::setprecision(6) << m.value;
+                return cell.str();
+            };
+
+            std::string divider(numCols * (kCellWidth + 4) - 4, '-');
+
+            ofs << "[+] 3-Pass Float Scan Results (PID: " << processId 
+                << " | Range: [" << minVal << ", " << maxVal << "]"
+                << " | Dynamic Matches: " << count
+                << " | Cols: " << numCols << ")\n";
+            ofs << divider << "\n";
+
+            if (count == 0) {
+                ofs << "  (No dynamic matches found)\n";
+            } else {
+                // Header row
+                for (int c = 0; c < numCols; ++c) {
+                    ofs << std::left << std::setw(14) << "Address"
+                        << " | " << std::setw(13) << "Float";
+                    if (c < numCols - 1) ofs << " || ";
+                }
+                ofs << "\n" << divider << "\n";
+
+                // Column-major layout (top-to-bottom per column)
+                for (int r = 0; r < numRows; ++r) {
+                    for (int c = 0; c < numCols; ++c) {
+                        int idx = c * numRows + r;
+                        ofs << formatCell(idx);
+                        if (c < numCols - 1) {
+                            ofs << " || ";
+                        }
+                    }
+                    ofs << "\n";
+                }
+            }
+            ofs << divider << "\n";
             ofs.close();
-            std::cout << "[+] Saved all " << finalMatches.size() << " dynamic results to '" << targetFile << "'.\n";
+
+            std::cout << "[+] Saved all " << finalMatches.size() << " dynamic results (" << numCols << "-col layout) to '" << targetFile << "'.\n";
         } else {
             std::cerr << "[-] Failed to open output file '" << targetFile << "'.\n";
         }
