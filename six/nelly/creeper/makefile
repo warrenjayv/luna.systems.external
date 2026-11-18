@@ -5,7 +5,7 @@ LDFLAGS = -lws2_32
 
 # Target executable name and object paths
 TARGET = nelly.exe
-OBJS = main.o sources/command.o sources/process.o sources/network.o sources/resolver.o
+OBJS = main.o sources/command.o sources/process.o sources/network.o sources/resolver.o sources/conjure.o
 
 # Default build rule
 all: $(TARGET)
@@ -28,6 +28,9 @@ sources/network.o: sources/network.cpp sources/network.h
 
 sources/resolver.o: sources/resolver.cpp sources/resolver.h
 	@$(CXX) $(CXXFLAGS) -c sources/resolver.cpp -o sources/resolver.o 2> error || (printf "\033[31mfail\033[0m\n"; exit 1)
+
+sources/conjure.o: sources/conjure.cpp sources/conjure.h
+	@$(CXX) $(CXXFLAGS) -c sources/conjure.cpp -o sources/conjure.o 2> error || (printf "\033[31mfail\033[0m\n"; exit 1)
 
 # Clean up built files, objects, dump directory, and error logs recursively
 clean:

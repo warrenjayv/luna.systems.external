@@ -1,10 +1,13 @@
 #include "command.h"
 #include "process.h"
 #include "network.h"
+#include "conjure.h"
+
 #include <iostream>
 #include <sstream>
 #include <vector>
 #include <cstdlib>
+#include <iomanip>
 
 void CommandHandler::PrintUsage(const char* /*programName*/) {
     std::cout << "\n[+] Available Interactive Commands:\n"
@@ -24,6 +27,8 @@ void CommandHandler::PrintUsage(const char* /*programName*/) {
               << " scanfloat <min_float> <max_float> [output_file] [stride] \n       - Scan entire user-space memory for floats in range\n"
               << " pid <NewPID>                                       - Switch to a different target PID\n"
               << " memmap [Filename]                                  - Print memory map of the target process and optionally save to file\n"
+              << " save <key> <start_hex> <end_hex>                   - Save an address range to the central registry by key\n"
+              << " getrange <key>                                     - Retrieve a saved address range by key\n"
               << " exit                                               - Close handle and exit session\n\n";
 }
 
@@ -345,6 +350,45 @@ else if (cmd == "floats" || cmd == "monitorfloats") {
         }
         else if (cmd == "stopscan") {
             ProcessHelper::StopFloatScan();
+        }
+        else if (cmd == "save") {
+            if (args.size() < 3) {
+                std::cout << "[-] Usage: save <key> <start_hex> <end_hex>\n";
+                std::cout << "    Example: save player_pos 0x1FF3002A6D0 0x1FF3002A800\n";
+                continue;
+            }
+
+            std::string key = args[0];
+            uintptr_t startAddr = 0;
+            uintptr_t endAddr = 0;
+
+            try {
+                startAddr = std::stoull(args[1], nullptr, 16);
+                endAddr = std::stoull(args[2], nullptr, 16);
+            } catch (const std::exception&) {
+                std::cout << "[-] Invalid hex address format.\n";
+                continue;
+            }
+
+            Conjure::SaveRange(hProcess, key, startAddr, endAddr);
+        }
+        else if (cmd == "getrange") {
+            if (args.empty()) {
+                std::cout << "[-] Usage: getrange <key>\n";
+                std::cout << "    Example: getrange player_pos\n";
+                continue;
+            }
+
+            std::string key = args[0];
+            auto record = Conjure::GetRange(key);
+            if (record.has_value()) {
+                std::cout << "[+] Found Range for Key [" << key << "]:\n";
+                std::cout << "    Start : 0x" << std::hex << std::setw(12) << std::setfill('0') << record->startAddress << "\n";
+                std::cout << "    End   : 0x" << std::setw(12) << std::setfill('0') << record->endAddress << "\n";
+                std::cout << "    Size  : " << std::dec << record->size << " bytes\n" << std::flush;
+            } else {
+                std::cout << "[-] Key '" << key << "' not found in central registry.\n";
+            }
         }
         else {
             std::cout << "[-] Unknown command: " << cmd << ". Type 'help' for options.\n";
