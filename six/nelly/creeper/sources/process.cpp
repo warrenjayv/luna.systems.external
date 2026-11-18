@@ -1073,6 +1073,7 @@ bool ReadMemoryRangeFloats(HANDLE hProcess, uintptr_t address, int count, const 
         resolver.Start(startAddress, endAddress, stride, cfg);
 
         SIZE_T totalBytes = endAddress - startAddress;
+        int zeroCount = 0; // Tracks consecutive ticks with 0 surviving candidates
 
         std::cout << "\n[+] Float Filter streaming directly to '" << ptyPath 
                   << "' (0x" << std::hex << startAddress << " -> 0x" << endAddress << std::dec << ").\n" << std::flush;
@@ -1095,6 +1096,18 @@ bool ReadMemoryRangeFloats(HANDLE hProcess, uintptr_t address, int count, const 
 
             auto survivors = resolver.GetSurvivingCandidates();
             int count = static_cast<int>(survivors.size());
+
+            // Auto-rescan / reset resolver if 0 entries persist for 30 ticks (~10-50 range)
+            if (count == 0) {
+                zeroCount++;
+                if (zeroCount >= 10) {
+                    resolver.Stop();
+                    resolver.Start(startAddress, endAddress, stride, cfg);
+                    zeroCount = 0;
+                }
+            } else {
+                zeroCount = 0; // Reset counter whenever survivors are active
+            }
 
             // Dynamically adjust columns (1, 2, or 3) as candidates get pruned over time
             int numCols = 1;
@@ -1147,7 +1160,7 @@ bool ReadMemoryRangeFloats(HANDLE hProcess, uintptr_t address, int count, const 
             oss << "\n" << divider << "\n";
 
             if (count == 0) {
-                oss << "  (No active candidates remaining within delta-D / radius bounds)\n";
+                oss << "  (No active candidates remaining - auto-rescan pending [" << zeroCount << "/30])\n";
             } else {
                 // Render rows in column-major order
                 for (int r = 0; r < numRows; ++r) {
