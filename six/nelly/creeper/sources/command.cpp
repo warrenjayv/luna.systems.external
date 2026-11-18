@@ -29,6 +29,7 @@ void CommandHandler::PrintUsage(const char* /*programName*/) {
               << " memmap [Filename]                                  - Print memory map of the target process and optionally save to file\n"
               << " save <key> <start_hex> <end_hex>                   - Save an address range to the central registry by key\n"
               << " getrange <key>                                     - Retrieve a saved address range by key\n"
+              << " findreg <hex_address_or_key>                       - Find register offsets pointing to a specific address\n"
               << " exit                                               - Close handle and exit session\n\n";
 }
 
@@ -389,6 +390,55 @@ else if (cmd == "floats" || cmd == "monitorfloats") {
             } else {
                 std::cout << "[-] Key '" << key << "' not found in central registry.\n";
             }
+        }
+        else if (cmd == "findreg") {
+            if (args.empty()) {
+                std::cout << "[-] Usage: findreg <hex_address_or_key>\n";
+                std::cout << "    Example: findreg 0x1FF3002A6D0   (or findreg player_pos)\n";
+                continue;
+            }
+
+            uintptr_t targetAddr = 0;
+            std::string inputKey = args[0];
+
+            if (inputKey.rfind("0x", 0) == 0 || inputKey.rfind("0X", 0) == 0) {
+                try {
+                    targetAddr = std::stoull(inputKey, nullptr, 16);
+                } catch (...) {
+                    std::cout << "[-] Invalid hex address format.\n";
+                    continue;
+                }
+            } else {
+                auto record = Conjure::GetRange(inputKey);
+                if (record.has_value()) {
+                    targetAddr = record->startAddress;
+                    std::cout << "[*] Resolved key [" << inputKey << "] to base address 0x" << std::hex << targetAddr << std::dec << "\n";
+                } else {
+                    try {
+                        targetAddr = std::stoull(inputKey, nullptr, 16);
+                    } catch (...) {
+                        std::cout << "[-] Key not found and invalid hex format.\n";
+                        continue;
+                    }
+                }
+            }
+
+            std::cout << "[*] Scanning thread contexts (via NT) on PID " << targetPid << " for pointers to 0x" << std::hex << targetAddr << std::dec << "...\n";
+            auto matches = Conjure::FindRegisterOffset(hProcess, targetPid, targetAddr);
+
+            if (matches.empty()) {
+                std::cout << "[-] No active thread registers point within range of this address right now.\n";
+            } else {
+                std::cout << "[+] Found matching register expressions:\n";
+                for (const auto& m : matches) {
+                    std::cout << "    -> " << std::left << std::setw(12) << m.expression 
+                              << " | Reg Address (Val): 0x" << std::hex << std::setw(12) << std::setfill('0') << m.regValue 
+                              << std::dec << std::setfill(' ') << "\n";
+                }
+                // Save records to config/records
+                Conjure::SaveRegisterRecords(inputKey, matches);
+            }
+            std::cout << std::flush;
         }
         else {
             std::cout << "[-] Unknown command: " << cmd << ". Type 'help' for options.\n";
