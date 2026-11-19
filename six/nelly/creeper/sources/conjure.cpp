@@ -7,6 +7,8 @@
 #include <map>
 #include <optional>
 #include <vector>
+#include <psapi.h>
+#include <cstring>
 
 // Native NT Undocumented Definitions & Structures
 typedef LONG NTSTATUS;
@@ -77,54 +79,298 @@ typedef NTSTATUS(WINAPI* pfnNtQuerySystemInformation)(ULONG, PVOID, ULONG, PULON
 typedef NTSTATUS(WINAPI* pfnNtSuspendThread)(HANDLE, PULONG);
 typedef NTSTATUS(WINAPI* pfnNtResumeThread)(HANDLE, PULONG);
 typedef NTSTATUS(WINAPI* pfnNtGetContextThread)(HANDLE, PCONTEXT);
+typedef NTSTATUS(WINAPI* pfnNtQueryVirtualMemory)(
+    HANDLE ProcessHandle,
+    PVOID BaseAddress,
+    ULONG MemoryInformationClass,
+    PVOID MemoryInformation,
+    SIZE_T MemoryInformationLength,
+    PSIZE_T ReturnLength
+);
+typedef NTSTATUS(WINAPI* pfnNtReadVirtualMemory)(
+    HANDLE ProcessHandle,
+    PVOID BaseAddress,
+    PVOID Buffer,
+    SIZE_T NumberOfBytesToRead,
+    PSIZE_T NumberOfBytesRead
+);
 
 namespace Conjure {
 
     const std::string kRegistryFile = "config/conjure_registry.cfg";
     const std::string kRecordsFile  = "config/records";
 
-    // ... (Keep LoadRegistry, SaveRange, GetRange unchanged) ...
+    struct ModuleSpan {
+            std::string name;
+            uintptr_t base;
+            uintptr_t end;
+    }; //\ ModuleSpan
 
+    struct NtMemoryApis {
+            pfnNtQueryVirtualMemory QueryVirtualMemory = nullptr;
+            pfnNtReadVirtualMemory  ReadVirtualMemory  = nullptr;
+            bool valid = false;
+    }; //\ NtMemoryApis
+
+    NtMemoryApis ResolveNtMemoryApis() {
+            NtMemoryApis apis;
+            HMODULE hNtdll = GetModuleHandleA("ntdll.dll");
+            if (!hNtdll) return apis;
+
+            apis.QueryVirtualMemory = reinterpret_cast<pfnNtQueryVirtualMemory>(
+                GetProcAddress(hNtdll, "NtQueryVirtualMemory"));
+            apis.ReadVirtualMemory = reinterpret_cast<pfnNtReadVirtualMemory>(
+                GetProcAddress(hNtdll, "NtReadVirtualMemory"));
+
+            apis.valid = (apis.QueryVirtualMemory != nullptr && apis.ReadVirtualMemory != nullptr);
+            return apis;
+    } //\ ResolveNtMemoryApis
+
+    std::string GetBaseName(const std::string& fullPath) {
+            size_t pos = fullPath.find_last_of("\\/");
+            return (pos == std::string::npos) ? fullPath : fullPath.substr(pos + 1);
+    } // GetBaseName
+
+    std::vector<ModuleSpan> EnumerateStaticModules(HANDLE hProcess, DWORD processId) {
+            std::vector<ModuleSpan> modules;
+            (void)processId;
+
+            HMODULE mods[1024];
+            DWORD cbNeeded = 0;
+            if (!EnumProcessModulesEx(hProcess, mods, sizeof(mods), &cbNeeded, LIST_MODULES_ALL)) {
+                return modules;
+            }
+
+            size_t count = cbNeeded / sizeof(HMODULE);
+            for (size_t i = 0; i < count; ++i) {
+                MODULEINFO info{};
+                char pathBuf[MAX_PATH] = {0};
+                if (GetModuleInformation(hProcess, mods[i], &info, sizeof(info)) &&
+                    GetModuleFileNameExA(hProcess, mods[i], pathBuf, MAX_PATH) > 0) {
+                    uintptr_t base = reinterpret_cast<uintptr_t>(info.lpBaseOfDll);
+                    uintptr_t end  = base + static_cast<uintptr_t>(info.SizeOfImage);
+                    modules.push_back({ GetBaseName(pathBuf), base, end });
+                }
+            }
+            return modules;
+    } //\ EnumerateStaticModules
+
+    void ScanModuleForPointers (
+                HANDLE hProcess,
+                const NtMemoryApis& ntMem,
+                const ModuleSpan& mod,
+                uintptr_t targetAddress,
+                ptrdiff_t radius,
+                const std::string& mode,
+                std::vector<PointerScanMatch>& outMatches)
+    {
+                if (!ntMem.valid || mod.end <= mod.base) return;
+
+                const ULONG kMemoryBasicInformation = 0; // MemoryBasicInformation
+                uintptr_t cursor = mod.base;
+
+                while (cursor < mod.end) {
+                    MEMORY_BASIC_INFORMATION mbi{};
+                    SIZE_T returnLength = 0;
+
+                    NTSTATUS qStatus = ntMem.QueryVirtualMemory(
+                        hProcess,
+                        reinterpret_cast<PVOID>(cursor),
+                        kMemoryBasicInformation,
+                        &mbi,
+                        sizeof(mbi),
+                        &returnLength);
+
+                    if (qStatus != STATUS_SUCCESS || mbi.RegionSize == 0) {
+                        cursor += 0x1000;
+                        continue;
+                    }
+
+                    uintptr_t regionStart = reinterpret_cast<uintptr_t>(mbi.BaseAddress);
+                    uintptr_t regionEnd   = regionStart + mbi.RegionSize;
+                    if (regionEnd > mod.end) regionEnd = mod.end;
+
+                    bool readable = (mbi.State == MEM_COMMIT) &&
+                                    !(mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD));
+
+                    if (readable && regionEnd > regionStart + sizeof(uintptr_t)) {
+                        SIZE_T regionSize = static_cast<SIZE_T>(regionEnd - regionStart);
+                        std::vector<BYTE> buf(regionSize);
+                        SIZE_T bytesRead = 0;
+
+                        NTSTATUS rStatus = ntMem.ReadVirtualMemory(
+                            hProcess,
+                            reinterpret_cast<PVOID>(regionStart),
+                            buf.data(),
+                            regionSize,
+                            &bytesRead);
+
+                        if (rStatus == STATUS_SUCCESS && bytesRead >= sizeof(uintptr_t)) {
+                            for (SIZE_T off = 0; off + sizeof(uintptr_t) <= bytesRead; off += sizeof(uintptr_t)) {
+                                uintptr_t val = 0;
+                                std::memcpy(&val, buf.data() + off, sizeof(uintptr_t));
+
+                                if (val == 0) continue;
+
+                                ptrdiff_t diff = static_cast<ptrdiff_t>(targetAddress) - static_cast<ptrdiff_t>(val);
+                                ptrdiff_t absDiff = (diff < 0) ? -diff : diff;
+
+                                bool matched = (radius == 0) ? (diff == 0) : (absDiff <= radius);
+                                if (matched) {
+                                    uintptr_t ptrAddr = regionStart + off;
+                                    PointerScanMatch match{
+                                        mode,
+                                        mod.name,
+                                        ptrAddr,
+                                        ptrAddr - mod.base,
+                                        val,
+                                        targetAddress,
+                                        diff
+                                    };
+
+                                    bool duplicate = false;
+                                    for (const auto& existing : outMatches) {
+                                        if (existing.pointerAddress == match.pointerAddress &&
+                                            existing.pointedValue == match.pointedValue) {
+                                            duplicate = true;
+                                            break;
+                                        }
+                                    }
+                                    if (!duplicate) {
+                                        outMatches.push_back(match);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (regionEnd <= cursor) break;
+                    cursor = regionEnd;
+                }
+    } //\ ScanModuleForPointers
+
+    std::vector<PointerScanMatch> PointerScan(HANDLE hProcess, DWORD processId, uintptr_t targetAddress, ptrdiff_t fallbackRadius) {
+        std::vector<PointerScanMatch> results;
+        if (!hProcess) return results;
+
+        NtMemoryApis ntMem = ResolveNtMemoryApis();
+        if (!ntMem.valid) return results;
+
+        auto modules = EnumerateStaticModules(hProcess, processId);
+        if (modules.empty()) return results;
+
+        // Pass 1: Direct static pointers pointing to targetAddress
+        for (const auto& mod : modules) {
+            ScanModuleForPointers(hProcess, ntMem, mod, targetAddress, 0, "DIRECT", results);
+        }
+
+        // Pass 2: Fallback if no direct static pointer found -> search +/- fallbackRadius
+        if (results.empty() && fallbackRadius > 0) {
+            for (const auto& mod : modules) {
+                ScanModuleForPointers(hProcess, ntMem, mod, targetAddress, fallbackRadius, "NEAR_1000B", results);
+            }
+        }
+
+        return results;
+    } //\ PointerScan
+
+    bool SavePointerRecords(const std::string& label, uintptr_t targetAddress, const std::vector<PointerScanMatch>& matches) {
+        CreateDirectoryA("config", nullptr);
+
+        std::ofstream ofs(kRecordsFile, std::ios::out | std::ios::app);
+        if (!ofs.is_open()) {
+            std::cerr << "[-] Failed to open records file '" << kRecordsFile << "' for writing.\n";
+            return false;
+        }
+
+        ofs << "# Pointer Scan | Label: " << label
+            << " | Target: 0x" << std::hex << targetAddress << std::dec << "\n";
+        ofs << "# FORMAT: MODE | MODULE+OFFSET | PTR_ADDR_HEX | POINTED_VAL_HEX | DELTA_FROM_TARGET\n";
+
+        for (const auto& m : matches) {
+            ofs << std::left << std::setw(12) << m.mode << " | "
+                << m.moduleName << "+0x" << std::hex << m.moduleOffset << " | 0x"
+                << std::setw(12) << std::setfill('0') << m.pointerAddress << " | 0x"
+                << std::setw(12) << std::setfill('0') << m.pointedValue << std::dec << std::setfill(' ') << " | ";
+
+            if (m.deltaFromTarget >= 0) {
+                ofs << "+0x" << std::hex << m.deltaFromTarget << std::dec;
+            } else {
+                ofs << "-0x" << std::hex << (-m.deltaFromTarget) << std::dec;
+            }
+            ofs << "\n";
+        }
+        ofs << "\n";
+        ofs.close();
+
+        std::cout << "[+] Appended " << matches.size() << " pointer record(s) to '" << kRecordsFile << "'.\n";
+        return true;
+    } //\ SavePointerRecords
+
+    // ... (Keep LoadRegistry, SaveRange, GetRange unchanged) ...
     std::vector<RegisterMatch> FindRegisterOffset(HANDLE hProcess, DWORD processId, uintptr_t targetAddress, int maxOffset) {
         std::vector<RegisterMatch> results;
-        (void)hProcess; // Unused since we read thread contexts via native NT APIs
+        (void)hProcess;
 
         HMODULE hNtdll = GetModuleHandleA("ntdll.dll");
         if (!hNtdll) return results;
 
-        auto NtQuerySystemInformation = (pfnNtQuerySystemInformation)GetProcAddress(hNtdll, "NtQuerySystemInformation");
-        auto NtSuspendThread          = (pfnNtSuspendThread)GetProcAddress(hNtdll, "NtSuspendThread");
-        auto NtResumeThread           = (pfnNtResumeThread)GetProcAddress(hNtdll, "NtResumeThread");
-        auto NtGetContextThread       = (pfnNtGetContextThread)GetProcAddress(hNtdll, "NtGetContextThread");
+        auto NtQuerySystemInformation = reinterpret_cast<pfnNtQuerySystemInformation>(
+            GetProcAddress(hNtdll, "NtQuerySystemInformation"));
+        auto NtSuspendThread = reinterpret_cast<pfnNtSuspendThread>(
+            GetProcAddress(hNtdll, "NtSuspendThread"));
+        auto NtResumeThread = reinterpret_cast<pfnNtResumeThread>(
+            GetProcAddress(hNtdll, "NtResumeThread"));
+        auto NtGetContextThread = reinterpret_cast<pfnNtGetContextThread>(
+            GetProcAddress(hNtdll, "NtGetContextThread"));
 
         if (!NtQuerySystemInformation || !NtSuspendThread || !NtResumeThread || !NtGetContextThread) {
             return results;
         }
 
+        const NTSTATUS STATUS_INFO_LENGTH_MISMATCH = static_cast<NTSTATUS>(0xC0000004L);
         ULONG bufferSize = 1024 * 1024;
         std::vector<BYTE> buffer(bufferSize);
         ULONG returnLength = 0;
 
         NTSTATUS status = NtQuerySystemInformation(5 /* SystemProcessInformation */, buffer.data(), bufferSize, &returnLength);
-        if (status != STATUS_SUCCESS) return results;
+        while (status == STATUS_INFO_LENGTH_MISMATCH) {
+            bufferSize = (returnLength > bufferSize) ? (returnLength + 65536) : (bufferSize * 2);
+            buffer.resize(bufferSize);
+            status = NtQuerySystemInformation(5 /* SystemProcessInformation */, buffer.data(), bufferSize, &returnLength);
+        }
 
-        PSYSTEM_PROCESS_INFORMATION procInfo = (PSYSTEM_PROCESS_INFORMATION)buffer.data();
+        if (status != STATUS_SUCCESS) {
+            return results;
+        }
+
+        auto* procInfo = reinterpret_cast<PSYSTEM_PROCESS_INFORMATION>(buffer.data());
         while (true) {
             if (HandleToULong(procInfo->UniqueProcessId) == processId) {
-                PSYSTEM_THREAD_INFORMATION threadArray = (PSYSTEM_THREAD_INFORMATION)((PBYTE)procInfo + sizeof(SYSTEM_PROCESS_INFORMATION));
-                
+                auto* threadArray = reinterpret_cast<PSYSTEM_THREAD_INFORMATION>(
+                    reinterpret_cast<PBYTE>(procInfo) + sizeof(SYSTEM_PROCESS_INFORMATION));
+
                 for (ULONG i = 0; i < procInfo->NumberOfThreads; ++i) {
                     DWORD threadId = HandleToULong(threadArray[i].ClientId.UniqueThread);
-                    
-                    HANDLE hThread = OpenThread(THREAD_GET_CONTEXT | THREAD_SUSPEND_RESUME | THREAD_QUERY_INFORMATION, FALSE, threadId);
+                    if (threadId == GetCurrentThreadId()) continue;
+
+                    HANDLE hThread = OpenThread(
+                        THREAD_GET_CONTEXT | THREAD_SUSPEND_RESUME | THREAD_QUERY_INFORMATION,
+                        FALSE,
+                        threadId);
+
                     if (hThread) {
                         ULONG prevSuspendCount = 0;
                         if (NtSuspendThread(hThread, &prevSuspendCount) == STATUS_SUCCESS) {
-                            CONTEXT ctx{};
+                            alignas(16) CONTEXT ctx{};
                             ctx.ContextFlags = CONTEXT_INTEGER;
-                            
+
                             if (NtGetContextThread(hThread, &ctx) == STATUS_SUCCESS) {
-                                struct RegInfo { const char* name; uintptr_t val; };
+                                struct RegInfo {
+                                    const char* name;
+                                    uintptr_t val;
+                                };
+
                                 RegInfo regs[] = {
                                     { "RAX", ctx.Rax }, { "RBX", ctx.Rbx }, { "RCX", ctx.Rcx }, { "RDX", ctx.Rdx },
                                     { "RSI", ctx.Rsi }, { "RDI", ctx.Rdi }, { "RBP", ctx.Rbp }, { "RSP", ctx.Rsp },
@@ -133,25 +379,30 @@ namespace Conjure {
                                 };
 
                                 for (const auto& r : regs) {
-                                    if (targetAddress >= r.val) {
+                                    if (r.val != 0 && targetAddress >= r.val) {
                                         ptrdiff_t diff = static_cast<ptrdiff_t>(targetAddress - r.val);
                                         if (diff >= 0 && diff <= maxOffset) {
                                             std::ostringstream oss;
                                             oss << r.name << "+0x" << std::hex << diff;
                                             std::string expr = oss.str();
-                                            
+
                                             bool exists = false;
                                             for (const auto& existing : results) {
-                                                if (existing.expression == expr) { exists = true; break; }
+                                                if (existing.expression == expr && existing.regValue == r.val) {
+                                                    exists = true;
+                                                    break;
+                                                }
                                             }
                                             if (!exists) {
-                                                results.push_back({r.name, r.val, targetAddress, diff, expr});
+                                                results.push_back({ r.name, r.val, targetAddress, diff, expr });
                                             }
                                         }
                                     }
                                 }
                             }
-                            NtResumeThread(hThread, &prevSuspendCount);
+
+                            ULONG resumeCount = 0;
+                            NtResumeThread(hThread, &resumeCount);
                         }
                         CloseHandle(hThread);
                     }
@@ -160,7 +411,8 @@ namespace Conjure {
             }
 
             if (procInfo->NextEntryOffset == 0) break;
-            procInfo = (PSYSTEM_PROCESS_INFORMATION)((PBYTE)procInfo + procInfo->NextEntryOffset);
+            procInfo = reinterpret_cast<PSYSTEM_PROCESS_INFORMATION>(
+                reinterpret_cast<PBYTE>(procInfo) + procInfo->NextEntryOffset);
         }
 
         return results;

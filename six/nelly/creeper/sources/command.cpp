@@ -8,29 +8,31 @@
 #include <vector>
 #include <cstdlib>
 #include <iomanip>
+#include <cstring>
 
 void CommandHandler::PrintUsage(const char* /*programName*/) {
     std::cout << "\n[+] Available Interactive Commands:\n"
-              << " pipe <pipe_name>                                   - Create a custom named pipe for data streaming\n"
-              << " getbase                                            - Get remote process base address\n"
-              << " modules                                            - List all loaded modules and base addresses\n" 
-              << " readaddr <HexAddress> [Size]                       - Read specific memory address\n"
-              << " readmem <StartHex> <FinishHex> [IP] [Port]         - Read memory range and dump\n"
-              << " readfloat <HexAddress> [Count] [Filename]          - Read and parse memory as floats/doubles and dump\n"
-              << " heaps                                              - List all heaps in the target process\n" 
-              << " monitor pty<n>                                     - Stream floating registers live to PTY target (e.g. monitor pty1)\n"
-              << " stopmonitor                                        - Stop the floating register monitor\n"
+              << " pipe <pipe_name>                              - Create a custom named pipe for data streaming\n"
+              << " getbase                                       - Get remote process base address\n"
+              << " modules                                       - List all loaded modules and base addresses\n" 
+              << " readaddr <HexAddress> [Size]                  - Read specific memory address\n"
+              << " readmem <StartHex> <FinishHex> [IP] [Port]    - Read memory range and dump\n"
+              << " readfloat <HexAddress> [Count] [Filename]     - Read and parse memory as floats/doubles and dump\n"
+              << " heaps                                         - List all heaps in the target process\n" 
+              << " monitor pty<n>                                - Stream floating registers live to PTY target (e.g. monitor pty1)\n"
+              << " stopmonitor                                   - Stop the floating register monitor\n"
               << " floats <pty target> <start_address> <end_address> [interval_ms] [stride] \n      - Monitor a memory range for float values and log to file\n"
               << " filter <pty target> <start_address> <end_address> [interval_ms] [stride] \n      - Filter a memory range for float values and log to file\n"
-              << " stopfloats                                         - Stop the float range monitor\n"
-              << " stopfilter                                         - Stop the float filter\n"
+              << " stopfloats                                     - Stop the float range monitor\n"
+              << " stopfilter                                     - Stop the float filter\n"
               << " scanfloat <min_float> <max_float> [output_file] [stride] \n       - Scan entire user-space memory for floats in range\n"
-              << " pid <NewPID>                                       - Switch to a different target PID\n"
-              << " memmap [Filename]                                  - Print memory map of the target process and optionally save to file\n"
-              << " save <key> <start_hex> <end_hex>                   - Save an address range to the central registry by key\n"
-              << " getrange <key>                                     - Retrieve a saved address range by key\n"
-              << " findreg <hex_address_or_key>                       - Find register offsets pointing to a specific address\n"
-              << " exit                                               - Close handle and exit session\n\n";
+              << " pid <NewPID>                                   - Switch to a different target PID\n"
+              << " memmap [Filename]                              - Print memory map of the target process and optionally save to file\n"
+              << " save <key> <start_hex> <end_hex>               - Save an address range to the central registry by key\n"
+              << " getrange <key>                                 - Retrieve a saved address range by key\n"
+              << " findreg <hex_address_or_key>                   - Find register offsets pointing to a specific address\n"
+              << " ptr <hex_address_or_key>                       - Scan for static pointers pointing to a specific address\n"
+              << " exit                                           - Close handle and exit session\n\n";
 }
 
 int CommandHandler::StartInteractiveShell(DWORD targetPid) {
@@ -437,6 +439,88 @@ else if (cmd == "floats" || cmd == "monitorfloats") {
                 }
                 // Save records to config/records
                 Conjure::SaveRegisterRecords(inputKey, matches);
+            }
+            std::cout << std::flush;
+        }
+        else if (cmd == "ptr") {
+            if (args.empty()) {
+                std::cout << "[-] Usage: ptr <hex_address_or_key> [fallback_radius]\n";
+                std::cout << "    Example: ptr 0x0223a002afd0 4096\n";
+                continue;
+            }
+
+            uintptr_t targetAddr = 0;
+            std::string label = args[0];
+
+            auto record = Conjure::GetRange(label);
+            if (record.has_value()) {
+                targetAddr = record->startAddress;
+                std::cout << "[*] Resolved key [" << label << "] -> 0x" << std::hex << targetAddr << std::dec << "\n";
+            } else {
+                try {
+                    targetAddr = std::stoull(label, nullptr, 16);
+                } catch (const std::exception&) {
+                    std::cout << "[-] Invalid hex address or unknown registry key.\n";
+                    continue;
+                }
+            }
+
+            ptrdiff_t fallbackRadius = 1000;
+            bool customRadiusProvided = false;
+
+            if (args.size() >= 2) {
+                try {
+                    int base = (args[1].rfind("0x", 0) == 0 || args[1].rfind("0X", 0) == 0) ? 16 : 10;
+                    unsigned long long parsed = std::stoull(args[1], nullptr, base);
+                    fallbackRadius = static_cast<ptrdiff_t>(parsed);
+                    customRadiusProvided = true;
+                } catch (const std::exception&) {
+                    std::cout << "[-] Invalid fallback radius format (use decimal or 0x hex).\n";
+                    continue;
+                }
+            }
+
+            std::cout << "[*] Running static pointer scan for 0x" << std::hex << targetAddr
+                      << std::dec << " (fallback +/-" << fallbackRadius << " bytes)...\n";
+
+            auto matches = Conjure::PointerScan(hProcess, targetPid, targetAddr, fallbackRadius);
+
+            // If no custom radius was given and 1000 bytes came up empty, let the user enter one
+            if (matches.empty() && !customRadiusProvided) {
+                std::cout << "[-] No matches within +/-" << fallbackRadius << " bytes.\n"
+                          << "[?] Enter custom fallback radius (or 0 to cancel): " << std::flush;
+
+                std::string radiusInput;
+                if (std::getline(std::cin, radiusInput) && !radiusInput.empty()) {
+                    try {
+                        int base = (radiusInput.rfind("0x", 0) == 0 || radiusInput.rfind("0X", 0) == 0) ? 16 : 10;
+                        unsigned long long retryVal = std::stoull(radiusInput, nullptr, base);
+                        if (retryVal > 0) {
+                            fallbackRadius = static_cast<ptrdiff_t>(retryVal);
+                            std::cout << "[*] Retrying static pointer scan with fallback +/-"
+                                      << fallbackRadius << " bytes...\n";
+                            matches = Conjure::PointerScan(hProcess, targetPid, targetAddr, fallbackRadius);
+                        }
+                    } catch (const std::exception&) {
+                        std::cout << "[-] Invalid radius input; skipping retry.\n";
+                    }
+                }
+            }
+
+            if (matches.empty()) {
+                std::cout << "[-] No static module pointers found directly or within +/-"
+                          << fallbackRadius << " bytes.\n";
+            } else {
+                std::cout << "[+] Found " << matches.size() << " static pointer match(es):\n";
+                for (const auto& m : matches) {
+                    std::cout << "    [" << m.mode << "] "
+                              << m.moduleName << "+0x" << std::hex << m.moduleOffset
+                              << " (0x" << m.pointerAddress << ") -> val 0x" << m.pointedValue
+                              << " | delta: " << (m.deltaFromTarget >= 0 ? "+" : "-") << "0x"
+                              << (m.deltaFromTarget >= 0 ? m.deltaFromTarget : -m.deltaFromTarget)
+                              << std::dec << "\n";
+                }
+                Conjure::SavePointerRecords(label, targetAddr, matches);
             }
             std::cout << std::flush;
         }

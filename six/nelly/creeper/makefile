@@ -34,7 +34,7 @@ sources/conjure.o: sources/conjure.cpp sources/conjure.h
 
 # Clean up built files, objects, dump directory, and error logs recursively
 clean:
-	@rm -rf *.o sources/*.o $(TARGET) dump error
+	@rm -rf *.o sources/*.o $(TARGET) error
 	@printf "\033[32mclean complete\033[0m\n"
 
 .PHONY: all clean

@@ -7,3 +7,13 @@
 *~
 Session.vim
 *.un~
+
+# Build artifacts
+*.o
+sources/*.o
+*.exe
+error
+
+# Runtime outputs & saved memory data
+dump/
+config/
