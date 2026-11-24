@@ -1,0 +1,19 @@
+# Vim script files
+*.vim
+
+# Vim swap/backup/temp files (recommended)
+*.swp
+*.swo
+*~
+Session.vim
+*.un~
+
+# Build artifacts
+*.o
+sources/*.o
+*.exe
+error
+
+# Runtime outputs & saved memory data
+dump/
+config/
