@@ -3,6 +3,7 @@
 #include "network.h"
 #include "conjure.h"
 
+#include <windows.h>
 #include <iostream>
 #include <sstream>
 #include <vector>
@@ -13,6 +14,8 @@
 void CommandHandler::PrintUsage(const char* /*programName*/) {
     std::cout << "\n[+] Available Interactive Commands:\n"
               << " pipe <pipe_name>                              - Create a custom named pipe for data streaming\n"
+              << " connect <IP> <Port>                           - Connect to a remote server for data streaming\n"
+              << " disconnect                                    - Disconnect from the remote server\n"
               << " getbase                                       - Get remote process base address\n"
               << " modules                                       - List all loaded modules and base addresses\n" 
               << " readaddr <HexAddress> [Size]                  - Read specific memory address\n"
@@ -21,18 +24,18 @@ void CommandHandler::PrintUsage(const char* /*programName*/) {
               << " heaps                                         - List all heaps in the target process\n" 
               << " monitor pty<n>                                - Stream floating registers live to PTY target (e.g. monitor pty1)\n"
               << " stopmonitor                                   - Stop the floating register monitor\n"
-              << " floats <pty target> <start_address> <end_address> [interval_ms] [stride] \n      - Monitor a memory range for float values and log to file\n"
-              << " filter <pty target> <start_address> <end_address> [interval_ms] [stride] \n      - Filter a memory range for float values and log to file\n"
-              << " stopfloats                                     - Stop the float range monitor\n"
-              << " stopfilter                                     - Stop the float filter\n"
-              << " scanfloat <min_float> <max_float> [output_file] [stride] \n       - Scan entire user-space memory for floats in range\n"
-              << " pid <NewPID>                                   - Switch to a different target PID\n"
-              << " memmap [Filename]                              - Print memory map of the target process and optionally save to file\n"
-              << " save <key> <start_hex> <end_hex>               - Save an address range to the central registry by key\n"
-              << " getrange <key>                                 - Retrieve a saved address range by key\n"
-              << " findreg <hex_address_or_key>                   - Find register offsets pointing to a specific address\n"
-              << " ptr <hex_address_or_key>                       - Scan for static pointers pointing to a specific address\n"
-              << " exit                                           - Close handle and exit session\n\n";
+              << " floats <pty target> <start_address> <end_address> [interval_ms] [stride] \n  - Monitor a memory range for float values and log to file\n"
+              << " filter <pty target> <start_address> <end_address> [interval_ms] [stride] \n  - Filter a memory range for float values and log to file\n"
+              << " stopfloats                                    - Stop the float range monitor\n"
+              << " stopfilter                                    - Stop the float filter\n"
+              << " scanfloat <min_float> <max_float> [output_file] [stride] \n  - Scan entire user-space memory for floats in range\n"
+              << " pid <NewPID>                                  - Switch to a different target PID\n"
+              << " memmap [Filename]                             - Print memory map of the target process and optionally save to file\n"
+              << " save <key> <start_hex> <end_hex>              - Save an address range to the central registry by key\n"
+              << " getrange <key>                                - Retrieve a saved address range by key\n"
+              << " findreg <hex_address_or_key>                  - Find register offsets pointing to a specific address\n"
+              << " ptr <hex_address_or_key>                      - Scan for static pointers pointing to a specific address\n"
+              << " exit                                          - Close handle and exit session\n\n";
 }
 
 int CommandHandler::StartInteractiveShell(DWORD targetPid) {
@@ -523,6 +526,27 @@ else if (cmd == "floats" || cmd == "monitorfloats") {
                 Conjure::SavePointerRecords(label, targetAddr, matches);
             }
             std::cout << std::flush;
+        } //\ ptr
+        else if (cmd == "connect") {
+            if (args.size() < 2) {
+                std::cout << "[-] Usage: connect <ip> <port>\n";
+                continue;
+            }
+
+            int port = 0;
+            try {
+                port = std::stoi(args[1]);
+            } catch (...) {
+                std::cout << "[-] Invalid port number.\n";
+                continue;
+            }
+
+            std::cout << "[*] Starting connection thread to " << args[0] << ":" << port << "...\n" << std::flush;
+            StartConnectAsync(args[0], port);
+        }
+        else if (cmd == "disconnect") {
+            DisconnectServer();
+            std::cout << "[+] Network connection closed.\n" << std::flush;
         }
         else {
             std::cout << "[-] Unknown command: " << cmd << ". Type 'help' for options.\n";
