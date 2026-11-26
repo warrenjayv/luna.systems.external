@@ -4,14 +4,14 @@ import { defineConfig } from "vite";
 export default defineConfig({
   server: {
     port: 8080,
-    open: false,
+    strictPort: true,
   },
   optimizeDeps: {
-    exclude: ['koffi']
+    exclude: ["koffi"],
   },
   build: {
     rollupOptions: {
-      external: ['koffi']
-    }
-  }
+      external: ["koffi"],
+    },
+  },
 });

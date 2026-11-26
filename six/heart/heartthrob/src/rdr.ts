@@ -1,12 +1,12 @@
 import { Application, Text } from "pixi.js";
 import * as _pen from "./pen";
 import * as _buc from "./bucket";
+import { _net } from "./network";
 
 // worker threads
 
-
 // parameters
-let _ctxt : Text;
+let _ctxt: Text;
 
 (async () => {
   // Create a new application
@@ -16,50 +16,65 @@ let _ctxt : Text;
   await app.init({ background: "#000e12", resizeTo: window });
 
   // add canvas
-  document.getElementById('pixi-container')?.appendChild(app.canvas);
+  document.getElementById("pixi-container")?.appendChild(app.canvas);
 
   // console
-  _ctxt = new Text({ text: 'console', style: _pen._cost });
+  _ctxt = new Text({ text: "console", style: _pen._cost });
   _ctxt.anchor.set(0.0);
-  _ctxt.position.set(5,5);
+  _ctxt.position.set(5, 5);
   app.stage.addChild(_ctxt);
 
   // first point ( need a daemon here )
-  let _pt1 = _pen._crpt(150, 150, 1, 0xFFFFFF, "pmc");
+  let _pt1 = _pen._crpt(150, 150, 1, 0xffffff, "pmc");
   app.stage.addChild(_pt1);
 
   // initialize console record
   _pen._cstr_test();
 
-  // attach to target process 
+  // attach to target process
   // fixme: moved to another tread
-  try 
-  {
-    setTimeout(()=> {
-        _buc._attach(1164);
-    }, 100);
-  } catch (_err)
-  {
-    _pen._cstr_add(4, "process attachment failed.\n${_err}");
+  try {
+setTimeout(() => {
+    try {
+      _net.onStatus((state, detail) => {
+        _pen._cstr_add(1, `net[${state}]${detail ? `: ${detail}` : ""}`);
+      });
+
+      _net.onSamples((items) => {
+        for (const s of items) {
+          _pen._cstr_add(0, `${s.address} -> ${s.value.toFixed(4)} (f32)`);
+        }
+      });
+
+      // _buc._attach(1164);
+      _net.start("127.0.0.1", 9000);
+    } catch (_err: unknown) {
+      const msg = _err instanceof Error ? _err.message : String(_err);
+      _pen._cstr_add(4, `Error occurred: ${msg}`);
+      console.error("network/bucket setup failed:", _err);
+    }
+  }, 100);
+  } catch (_err) {
+    _pen._cstr_add(4, `Error Occurred:\n ${_err}`);
     console.log("bucket failed to attach.");
   }
 
   // daemon
   setInterval(() => {
     // _temon(_pt1)
-    _upcost( _pen._cstr_get_all() )
+    _upcost(_pen._cstr_get_all());
   }, 1000);
-
 })();
 
 // update the console text accordingly
 export function _upcost(_in: string): void {
-    if (_in) {
-        _ctxt.text = _in;
-    }
+  if (_in) {
+    _ctxt.text = _in;
+  }
 }
 
 // test console text
+/*
 function _tecost( ): void {
     let _msg = "payload\n";
     for (let i =0; i < 100; i++)
@@ -78,4 +93,4 @@ function _temon( _pti: ReturnType<typeof _pen._crpt> ): void {
 
     _pti.position.set(_rx, _ry);
 
-}
+}*/
