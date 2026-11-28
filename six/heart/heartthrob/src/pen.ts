@@ -1,7 +1,12 @@
 import { Text, TextStyle, Graphics, Container } from "pixi.js";
+import type { PointPair } from "./network.work";
+export type { PointPair };
 
 // console structure
 let _cstr: Record<number, string> = {};
+
+// drawn address-pair point containers keyed by pair id
+const _drawnPoints = new Map<string, Container>();
 
 // console style
 export const _cost = new TextStyle({
@@ -10,13 +15,6 @@ export const _cost = new TextStyle({
   fontStyle: "italic",
   fontWeight: "normal",
   fill: "#ffffff",
-  // stroke: { color: '#4a1850', width: 5, join: 'round' },
-  /* dropShadow: {
-        color: '#000000',
-        blur: 4,
-        angle: Math.PI / 6,
-        distance: 6,
-    }, */
   wordWrap: true,
   wordWrapWidth: 440,
 });
@@ -45,7 +43,41 @@ export function _crpt(
   _cr.position.set(_x, _y);
 
   return _cr;
-}
+} //\ _crpt
+
+// draw or update all closest-address point pairs on the target stage
+export function _drawPoints(
+  stage: Container,
+  pairs: readonly PointPair[],
+  width: number,
+  height: number,
+): void {
+  const activeIds = new Set<string>();
+
+  for (const pt of pairs) {
+    activeIds.add(pt.id);
+
+    const x = Math.max(16, Math.min(width - 16, pt.x));
+    const y = Math.max(16, Math.min(height - 16, pt.y));
+
+    let dot = _drawnPoints.get(pt.id);
+    if (!dot) {
+      dot = _crpt(x, y, 4, 0x00e5ff, `${pt.addrA} / ${pt.addrB}`);
+      stage.addChild(dot);
+      _drawnPoints.set(pt.id, dot);
+    } else {
+      dot.position.set(x, y);
+    }
+  }
+
+  for (const [id, container] of _drawnPoints.entries()) {
+    if (!activeIds.has(id)) {
+      stage.removeChild(container);
+      container.destroy({ children: true });
+      _drawnPoints.delete(id);
+    }
+  }
+} //\ _drawPoints
 
 export function _cstr_add(_i: number, _v: string): void {
   _cstr[_i] = _v;

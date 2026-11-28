@@ -34,37 +34,46 @@ let _ctxt: Text;
   // attach to target process
   // fixme: moved to another tread
   try {
-setTimeout(() => {
-    try {
-      _net.onStatus((state, detail) => {
-        _pen._cstr_add(1, `net[${state}]${detail ? `: ${detail}` : ""}`);
-      });
+    setTimeout(() => {
+      try {
+        _net.onStatus((state, detail) => {
+          _pen._cstr_add(1, `net[${state}]${detail ? `: ${detail}` : ""}`);
+        });
 
-      _net.onSamples((items) => {
-        for (const s of items) {
-          _pen._cstr_add(0, `${s.address} -> ${s.value.toFixed(4)} (f32)`);
-        }
-      });
+        _net.onSamples((items) => {
+          for (const s of items) {
+            _pen._cstr_add(0, `${s.address} -> ${s.value.toFixed(4)} (f32)`);
+          }
+        });
 
-      // _buc._attach(1164);
-      _net.start("127.0.0.1", 9000);
-    } catch (_err: unknown) {
-      const msg = _err instanceof Error ? _err.message : String(_err);
-      _pen._cstr_add(4, `Error occurred: ${msg}`);
-      console.error("network/bucket setup failed:", _err);
-    }
-  }, 100);
+        _net.onPoints((pairs) => {
+          _pen._drawPoints(
+            app.stage,
+            pairs,
+            app.screen.width,
+            app.screen.height,
+          );
+        }); 
+
+        // _buc._attach(1164);
+        _net.start("127.0.0.1", 9000);
+      } catch (_err: unknown) {
+        const msg = _err instanceof Error ? _err.message : String(_err);
+        _pen._cstr_add(4, `error: ${msg}`);
+        console.error("failure: ", _err);
+      }
+    }, 100);
   } catch (_err) {
-    _pen._cstr_add(4, `Error Occurred:\n ${_err}`);
-    console.log("bucket failed to attach.");
-  }
+    _pen._cstr_add(4, `error Occurred:\n ${_err}`);
+    console.log("failure detected:", _err);
+  } 
 
   // daemon
   setInterval(() => {
     // _temon(_pt1)
     _upcost(_pen._cstr_get_all());
   }, 1000);
-})();
+})(); 
 
 // update the console text accordingly
 export function _upcost(_in: string): void {

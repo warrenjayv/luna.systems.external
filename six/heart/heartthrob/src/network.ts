@@ -1,6 +1,7 @@
-import type { FloatSample, WorkerOutgoingMessage } from "./network.work";
+import type { FloatSample, PointPair, WorkerOutgoingMessage } from "./network.work";
 
 export type SampleListener = (samples: FloatSample[]) => void;
+export type PointPairListener = (points: PointPair[]) => void;
 export type StatusListener = (
   state: "listening" | "stopped" | "error",
   detail?: string,
@@ -34,8 +35,10 @@ function getIpcRenderer(): IpcRendererLike | null {
 class NetworkManager {
   private worker: Worker | null = null;
   private sampleListeners = new Set<SampleListener>();
+  private pointListeners = new Set<PointPairListener>();
   private statusListeners = new Set<StatusListener>();
   private latestByAddress = new Map<string, FloatSample>();
+  private latestPoints: PointPair[] = [];
   private ipcListener: ((_event: unknown, chunk: string) => void) | null = null;
 
   public start(host = "127.0.0.1", port = 9000): void {
@@ -58,8 +61,14 @@ class NetworkManager {
         for (const cb of this.statusListeners) {
           cb(msg.state, msg.detail);
         }
-      }
-    };
+      } else if (msg.type === "points") {
+        this.latestPoints = msg.items;
+        for (const cb of this.pointListeners) {
+          cb(msg.items);
+       }
+      }   
+      
+    }; //\ this.worker.onmessage
 
     this.worker.onerror = (err) => {
       for (const cb of this.statusListeners) {
@@ -118,7 +127,16 @@ class NetworkManager {
       this.worker = null;
     }
   }
-}
+
+  public getLatestPoints(): PointPair[] {
+      return this.latestPoints;
+  }
+
+  public onPoints(cb: PointPairListener): () => void {
+    this.pointListeners.add(cb);
+    return () => this.pointListeners.delete(cb);
+  }
+} //\ NetworkManager
 
 export const _net = new NetworkManager();
 export type { FloatSample };
