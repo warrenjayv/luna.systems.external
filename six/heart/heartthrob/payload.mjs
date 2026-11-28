@@ -1,15 +1,56 @@
-// payload.mjs
 import { app, BrowserWindow, ipcMain } from "electron";
 import net from "node:net";
+import http from "node:http";
+import { spawn } from "node:child_process";
 import { fileURLToPath } from "url";
 import path from "path";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+const mtuEnabled =
+process.env.MTU_ENABLE === "1" || process.argv.includes("--mtu");
+
 let tcpServer = null;
+let mtuProc = null;
+
+function startMtuGenerator({
+  count = 1000,
+  intervalMs = 100,
+  host = "127.0.0.1",
+  port = 9000,
+} = {}) {
+  stopMtuGenerator();
+
+  const scriptPath = path.join(__dirname, "mtu.mjs");
+  mtuProc = spawn(process.execPath, [scriptPath], {
+    stdio: "inherit",
+    env: {
+      ...process.env,
+      ELECTRON_RUN_AS_NODE: "1",
+      MTU_HOST: host,
+      MTU_PORT: String(port),
+      MTU_COUNT: String(count),
+      MTU_INTERVAL_MS: String(intervalMs),
+    },
+  });
+
+  mtuProc.on("exit", (code) => {
+    console.log(`[mtu] exited with code ${code ?? 0}`);
+    mtuProc = null;
+  });
+}
+
+function stopMtuGenerator() {
+  if (mtuProc && !mtuProc.killed) {
+    mtuProc.kill("SIGTERM");
+    mtuProc = null;
+  }
+}
 
 function startTcpServer(host = "127.0.0.1", port = 9000) {
+  stopMtuGenerator();
+
   if (tcpServer) {
     tcpServer.close();
     tcpServer = null;
@@ -39,12 +80,19 @@ function startTcpServer(host = "127.0.0.1", port = 9000) {
     server.listen(port, host, () => {
       tcpServer = server;
       console.log(`[+] TCP server listening on ${host}:${port}`);
+
+      if (mtuEnabled) {
+        startMtuGenerator({ count: 1000, intervalMs: 100, host, port });
+      }
+
       resolve({ ok: true });
     });
   });
 }
 
 function stopTcpServer() {
+  stopMtuGenerator();
+
   if (tcpServer) {
     tcpServer.close();
     tcpServer = null;
@@ -82,6 +130,7 @@ function createWindow() {
       console.error("[electron]", err.message);
     });
 }
+
 app.whenReady().then(() => {
   createWindow();
 
@@ -95,8 +144,6 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
 
-import http from 'node:http';
-
 function waitForServer(url, timeoutMs = 15000) {
   const start = Date.now();
   return new Promise((resolve, reject) => {
@@ -105,7 +152,7 @@ function waitForServer(url, timeoutMs = 15000) {
         res.resume();
         resolve();
       });
-      req.on('error', () => {
+      req.on("error", () => {
         if (Date.now() - start >= timeoutMs) {
           reject(new Error(`Timed out waiting for ${url}`));
         } else {

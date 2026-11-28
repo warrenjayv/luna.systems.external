@@ -56,7 +56,14 @@ let _ctxt: Text;
         }); 
 
         // _buc._attach(1164);
-        _net.start("127.0.0.1", 9000);
+        _net.start("127.0.0.1", 9000, app.screen.width, app.screen.height);
+
+        // viewport resize
+        const handleResize = () => {
+          _net.setViewport(app.screen.width, app.screen.height);
+        };
+        window.addEventListener("resize", handleResize);
+
       } catch (_err: unknown) {
         const msg = _err instanceof Error ? _err.message : String(_err);
         _pen._cstr_add(4, `error: ${msg}`);

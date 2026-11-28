@@ -1,4 +1,8 @@
-import type { FloatSample, PointPair, WorkerOutgoingMessage } from "./network.work";
+import type {
+  FloatSample,
+  PointPair,
+  WorkerOutgoingMessage,
+} from "./network.work";
 
 export type SampleListener = (samples: FloatSample[]) => void;
 export type PointPairListener = (points: PointPair[]) => void;
@@ -41,7 +45,12 @@ class NetworkManager {
   private latestPoints: PointPair[] = [];
   private ipcListener: ((_event: unknown, chunk: string) => void) | null = null;
 
-  public start(host = "127.0.0.1", port = 9000): void {
+  public start(
+    host = "127.0.0.1",
+    port = 9000,
+    width = window.innerWidth,
+    height = window.innerHeight,
+  ): void {
     this.stop();
 
     this.worker = new Worker(new URL("./network.work.ts", import.meta.url), {
@@ -65,10 +74,9 @@ class NetworkManager {
         this.latestPoints = msg.items;
         for (const cb of this.pointListeners) {
           cb(msg.items);
-       }
-      }   
-      
-    }; //\ this.worker.onmessage
+        }
+      }
+    };
 
     this.worker.onerror = (err) => {
       for (const cb of this.statusListeners) {
@@ -76,7 +84,7 @@ class NetworkManager {
       }
     };
 
-    this.worker.postMessage({ type: "start", host, port });
+    this.worker.postMessage({ type: "start", host, port, width, height });
 
     const ipc = getIpcRenderer();
     if (ipc) {
@@ -98,13 +106,30 @@ class NetworkManager {
     }
   }
 
+  public setViewport(width: number, height: number): void {
+    if (!this.worker) return;
+    if (!Number.isFinite(width) || !Number.isFinite(height)) return;
+    if (width <= 0 || height <= 0) return;
+
+    this.worker.postMessage({ type: "viewport", width, height });
+  }
+
   public getLatestMap(): Map<string, FloatSample> {
     return this.latestByAddress;
+  }
+
+  public getLatestPoints(): PointPair[] {
+    return this.latestPoints;
   }
 
   public onSamples(cb: SampleListener): () => void {
     this.sampleListeners.add(cb);
     return () => this.sampleListeners.delete(cb);
+  }
+
+  public onPoints(cb: PointPairListener): () => void {
+    this.pointListeners.add(cb);
+    return () => this.pointListeners.delete(cb);
   }
 
   public onStatus(cb: StatusListener): () => void {
@@ -127,16 +152,7 @@ class NetworkManager {
       this.worker = null;
     }
   }
-
-  public getLatestPoints(): PointPair[] {
-      return this.latestPoints;
-  }
-
-  public onPoints(cb: PointPairListener): () => void {
-    this.pointListeners.add(cb);
-    return () => this.pointListeners.delete(cb);
-  }
-} //\ NetworkManager
+}
 
 export const _net = new NetworkManager();
 export type { FloatSample };

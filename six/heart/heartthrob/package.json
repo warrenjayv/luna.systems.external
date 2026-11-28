@@ -3,13 +3,15 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "scripts": {
+ "scripts": {
     "start": "npm run dev",
     "build": "npm run lint && tsc && vite build",
     "lint": "eslint .",
     "vite": "vite",
     "electron": "electron payload.mjs",
-    "dev": "concurrently \"npm run vite\" \"npm run electron\""
+    "electron:mtu": "electron payload.mjs --mtu",
+    "dev": "concurrently \"npm run vite\" \"npm run electron\"",
+    "dev:mtu": "concurrently \"npm run vite\" \"npm run electron:mtu\""
   },
   "dependencies": {
     "koffi": "^3.3.4",

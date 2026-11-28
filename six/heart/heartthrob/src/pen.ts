@@ -2,6 +2,8 @@ import { Text, TextStyle, Graphics, Container } from "pixi.js";
 import type { PointPair } from "./network.work";
 export type { PointPair };
 
+const POINT_RADIUS = 2;
+
 // console structure
 let _cstr: Record<number, string> = {};
 
@@ -35,7 +37,7 @@ export function _crpt(
   _cg.fill({ color: _hc });
 
   _el.anchor.set(0.5, 1.0);
-  _el.position.set(0, _r - 2);
+  _el.position.set(0, -_r - 2);
 
   _cr.addChild(_cg);
   _cr.addChild(_el);
@@ -62,7 +64,7 @@ export function _drawPoints(
 
     let dot = _drawnPoints.get(pt.id);
     if (!dot) {
-      dot = _crpt(x, y, 4, 0x00e5ff, `${pt.addrA} / ${pt.addrB}`);
+      dot = _crpt(x, y, POINT_RADIUS, 0x00e5ff, `${pt.addrA} / ${pt.addrB}`);
       stage.addChild(dot);
       _drawnPoints.set(pt.id, dot);
     } else {
